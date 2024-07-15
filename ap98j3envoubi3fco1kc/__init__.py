@@ -434,7 +434,8 @@ async def load_cookies_from_file(file_path):
 
 async def create_session_with_proxy(ip, port, cookies_file_path):
     # Create a ProxyConnector for each proxy with connection pooling
-    connector = ProxyConnector.from_url(f"socks5://{ip}:{port}")
+    tcp_connector = TCPConnector(limit=10, limit_per_host=2)  # Create a new TCPConnector for each proxy
+    connector = ProxyConnector.from_url(f"socks5://{ip}:{port}", rdns=True)
     cookies_data = await load_cookies_from_file(cookies_file_path)
     jar = CookieJar()
     for cookie in cookies_data:
@@ -734,7 +735,7 @@ def correct_reddit_url(url):
 
 def post_process_item(item):    
     try:
-        if len(item['content'])>10:
+        if len(item['content']) > 10:
             subreddit_name = extract_subreddit_name(item["url"])
             if subreddit_name is None:
                 return item
