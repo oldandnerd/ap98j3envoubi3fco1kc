@@ -1,0 +1,8 @@
+lxml
+exorde_data
+aiohttp
+
+[dev]
+pytest
+pytest-cov
+pytest-asyncio
