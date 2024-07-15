@@ -12,6 +12,7 @@ from datetime import datetime as datett, datetime
 from datetime import timezone
 import hashlib
 import logging
+from lxml.html import fromstring
 import re
 from exorde_data import (
     Item,
@@ -441,7 +442,7 @@ async def create_session_with_proxy(ip, port, cookies_file_path):
     logging.info(f"Created session with proxy {ip}:{port} and cookies from {cookies_file_path}")
     return session, f"{ip}:{port}"
 
-async def generate_url(ip: str):
+async def generate_url(session: ClientSession, ip: str):
     for _ in range(3):  # Try up to 3 times to get a valid URL
         selected_subreddit_ = "https://reddit.com/" + random.choice(
             subreddits_top_225 if random.random() < 0.5 else subreddits_top_1000
@@ -474,6 +475,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
 
     async def post(data) -> AsyncGenerator[Item, None]:
         nonlocal count
+        """t3"""
         content = data["data"]
         item_ = Item(
             content=Content(content["selftext"]),
@@ -484,12 +486,17 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
             url=Url("https://reddit.com" + content["url"]),
         )
         if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
-            if len(tokenizer.encode(item_.content).tokens) <= 512 and count < limit:
+            # Skip items longer than 512 tokens
+            if len(tokenizer.encode(item_.content).tokens) > 512:
+                logging.info(f"[Reddit] ({ip}) Skipping post with more than 512 tokens")
+                return
+            if count < limit:
                 yield item_
                 count += 1
 
     async def comment(data) -> AsyncGenerator[Item, None]:
         nonlocal count
+        """t1"""
         content = data["data"]
         item_ = Item(
             content=Content(content["body"]),
@@ -499,7 +506,11 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
             url=Url("https://reddit.com" + content["permalink"]),
         )
         if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
-            if len(tokenizer.encode(item_.content).tokens) <= 512 and count < limit:
+            # Skip items longer than 512 tokens
+            if len(tokenizer.encode(item_.content).tokens) > 512:
+                logging.info(f"[Reddit] ({ip}) Skipping comment with more than 512 tokens")
+                return
+            if count < limit:
                 yield item_
                 count += 1
 
@@ -722,7 +733,7 @@ def correct_reddit_url(url):
 
 def post_process_item(item):    
     try:
-        if len(item['content']) > 10:
+        if len(item['content'])>10:
             subreddit_name = extract_subreddit_name(item["url"])
             if subreddit_name is None:
                 return item
@@ -764,7 +775,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     sessions = [await create_session_with_proxy(ip, port, cookie_file) for ip, port, cookie_file in proxies]
 
     try:
-        scrape_tasks = [scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight, nb_subreddit_attempts) for session, ip in sessions]
+        scrape_tasks = [scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight) for session, ip in sessions]
         results = await asyncio.gather(*scrape_tasks)
 
         for items in results:
@@ -778,17 +789,17 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
             await session.close()
             await asyncio.sleep(0.5)  # Add delay between each request
 
-async def scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight, nb_subreddit_attempts):
+async def scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight):
     items = []
     count = 0  # Counter for items collected within the session
-    for i in range(nb_subreddit_attempts):
+    for i in range(DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS):
         await asyncio.sleep(random.uniform(1, i))
-        url = await generate_url(ip)
+        url = await generate_url(session, ip)
         if not url:
             continue
         if url.endswith("/new/new/.json"):
             url = url.replace("/new/new/.json", "/new.json")
-        logging.info(f"[Reddit] ({ip}) Attempt {(i+1)}/{nb_subreddit_attempts} Scraping {url} with max oldness of {max_oldness_seconds}")
+        logging.info(f"[Reddit] ({ip}) Attempt {(i+1)}/{DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS} Scraping {url} with max oldness of {max_oldness_seconds}")
         if "reddit.com" not in url:
             raise ValueError(f"Not a Reddit URL {url}")
         url_parameters = url.split("reddit.com")[1].split("/")[1:]
