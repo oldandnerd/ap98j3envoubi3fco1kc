@@ -36,7 +36,6 @@ MAX_EXPIRATION_SECONDS = 80000
 SKIP_POST_PROBABILITY = 0.1
 BASE_TIMEOUT = 30
 
-
 subreddits_top_225 = [
     "r/all",
     "r/all",
@@ -419,7 +418,6 @@ subreddits_top_1000 = [
     "r/Calgary","r/furry","r/csMajors","r/Bedbugs","r/DBZDokkanBattle","r/mumbai","r/popheadscirclejerk","r/marvelmemes","r/Egypt","r/Topster",
 ]
 
-
 async def load_cookies_from_file(file_path: str) -> Dict:
     with open(file_path, 'r') as file:
         return json.load(file)
@@ -574,7 +572,7 @@ def split_strings_subreddit_name(input_string: str) -> str:
     start = 0
 
     for i in range(1, len(input_string)):
-        if input_string[i].isupper():
+        if input_string[i].isupper()):
             words.append(input_string[start:i])
             start = i
 
@@ -781,3 +779,4 @@ def load_proxies(file_path: str) -> List[Tuple[str, str, str]]:
         cookie_file = cookie_file.split('=')[1]
         proxies.append((ip, port, f'/exorde/{cookie_file}'))
     return proxies
+
