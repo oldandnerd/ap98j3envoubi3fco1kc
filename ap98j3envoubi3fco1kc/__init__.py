@@ -485,7 +485,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
             created_at=CreatedAt(str(format_timestamp(content["created_utc"]))),
             title=Title(content["title"]),
             domain=Domain("reddit.com"),
-            url=Url("https://reddit.com" + content["url"]),
+            url=Url("https://reddit.com" + content["permalink"]),
         )
         if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
             # Skip items longer than 512 tokens
