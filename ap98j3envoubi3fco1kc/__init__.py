@@ -45,9 +45,6 @@ MAX_EXPIRATION_SECONDS = 80000
 SKIP_POST_PROBABILITY = 0.1
 BASE_TIMEOUT = 30
 
-# TCP connector with connection pooling
-tcp_connector = TCPConnector(limit=10, limit_per_host=2)
-
 subreddits_top_225 = [
     "r/all",
     "r/all",
@@ -436,6 +433,8 @@ async def load_cookies_from_file(file_path):
     return cookies_data
 
 async def create_session_with_proxy(ip, port, cookies_file_path):
+    # Create a TCPConnector for each proxy with connection pooling
+    tcp_connector = TCPConnector(limit=10, limit_per_host=2)
     connector = ProxyConnector.from_url(f"socks5://{ip}:{port}", connector=tcp_connector)
     cookies_data = await load_cookies_from_file(cookies_file_path)
     jar = CookieJar()
