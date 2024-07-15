@@ -787,7 +787,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     finally:
         for session, _ in sessions:
             await session.close()
-            await asyncio.sleep(0.5)  # Add delay between each request
+            await asyncio.sleep(0.1)  # Add delay between each request
 
 async def scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight):
     items = []

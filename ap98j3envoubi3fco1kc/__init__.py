@@ -1,27 +1,19 @@
 import json
 import random
+import asyncio
 import aiohttp
 from aiohttp_socks import ProxyConnector
 from aiohttp import ClientSession, CookieJar
 from yarl import URL
-import asyncio
 from lxml import html
-from typing import AsyncGenerator, List
+from lxml.html import fromstring
+from typing import AsyncGenerator, List, Dict, Tuple
 import time
-from datetime import datetime as datett, datetime
-from datetime import timezone
 import hashlib
 import logging
+from datetime import datetime as datett, timezone
 import re
-from exorde_data import (
-    Item,
-    Content,
-    Author,
-    CreatedAt,
-    Title,
-    Url,
-    Domain,
-)
+from collections import defaultdict
 from wordsegment import load, segment
 from tokenizers import Tokenizer, models, pre_tokenizers
 
@@ -43,6 +35,7 @@ global SKIP_POST_PROBABILITY
 MAX_EXPIRATION_SECONDS = 80000
 SKIP_POST_PROBABILITY = 0.1
 BASE_TIMEOUT = 30
+
 
 subreddits_top_225 = [
     "r/all",
@@ -426,12 +419,11 @@ subreddits_top_1000 = [
     "r/Calgary","r/furry","r/csMajors","r/Bedbugs","r/DBZDokkanBattle","r/mumbai","r/popheadscirclejerk","r/marvelmemes","r/Egypt","r/Topster",
 ]
 
-async def load_cookies_from_file(file_path):
+async def load_cookies_from_file(file_path: str) -> Dict:
     with open(file_path, 'r') as file:
-        cookies_data = json.load(file)
-    return cookies_data
+        return json.load(file)
 
-async def create_session_with_proxy(ip, port, cookies_file_path):
+async def create_session_with_proxy(ip: str, port: str, cookies_file_path: str) -> Tuple[ClientSession, str]:
     connector = ProxyConnector.from_url(f"socks5://{ip}:{port}")
     cookies_data = await load_cookies_from_file(cookies_file_path)
     jar = CookieJar()
@@ -441,73 +433,77 @@ async def create_session_with_proxy(ip, port, cookies_file_path):
     logging.info(f"Created session with proxy {ip}:{port} and cookies from {cookies_file_path}")
     return session, f"{ip}:{port}"
 
-async def generate_url(ip: str):
-    for _ in range(3):  # Try up to 3 times to get a valid URL
+async def generate_url(session: ClientSession, ip: str) -> str:
+    for _ in range(3):
         selected_subreddit_ = "https://reddit.com/" + random.choice(
             subreddits_top_225 if random.random() < 0.5 else subreddits_top_1000
         )
         url = selected_subreddit_
-
         if url:
             logging.info(f"[Reddit] ({ip}) Generated subreddit URL: {url}")
             return url
-        else:
-            logging.warning(f"[Reddit] ({ip}) Failed to generate URL. Retrying...")
+        logging.warning(f"[Reddit] ({ip}) Failed to generate URL. Retrying...")
     raise ValueError(f"[Reddit] ({ip}) Failed to generate a valid URL after multiple attempts")
 
-def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
-    current_timestamp = int(time.time())  # Get the current UNIX timestamp
+def is_within_timeframe_seconds(input_timestamp: int, timeframe_sec: int) -> bool:
+    current_timestamp = int(time.time())
     return (current_timestamp - int(input_timestamp)) <= timeframe_sec
 
-def format_timestamp(timestamp):
+def format_timestamp(timestamp: int) -> str:
     dt = datett.fromtimestamp(timestamp, timezone.utc)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def extract_subreddit_name(input_string):
+def extract_subreddit_name(input_string: str) -> str:
     match = re.search(r'r/([^/]+)', input_string)
     return match.group(1) if match else None
 
-async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
+async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int, semaphore: asyncio.Semaphore) -> AsyncGenerator[Dict, None]:
     if count >= limit:
         return
     resolvers = {}
 
-    async def post(data) -> AsyncGenerator[Item, None]:
+    async def post(data) -> AsyncGenerator[Dict, None]:
         nonlocal count
         content = data["data"]
-        item_ = Item(
-            content=Content(content["selftext"]),
-            author=Author(hashlib.sha1(bytes(content["author"], encoding="utf-8")).hexdigest()),
-            created_at=CreatedAt(str(format_timestamp(content["created_utc"]))),
-            title=Title(content["title"]),
-            domain=Domain("reddit.com"),
-            url=Url("https://reddit.com" + content["url"]),
-        )
+        item_ = {
+            "content": content["selftext"],
+            "author": hashlib.sha1(bytes(content["author"], encoding="utf-8")).hexdigest(),
+            "created_at": format_timestamp(content["created_utc"]),
+            "title": content["title"],
+            "domain": "reddit.com",
+            "url": "https://reddit.com" + content["url"],
+        }
         if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
-            if len(tokenizer.encode(item_.content).tokens) <= 512 and count < limit:
+            if len(tokenizer.encode(item_["content"]).tokens) > 512:
+                logging.info(f"[Reddit] ({ip}) Skipping post with more than 512 tokens")
+                return
+            if count < limit:
                 yield item_
                 count += 1
 
-    async def comment(data) -> AsyncGenerator[Item, None]:
+    async def comment(data) -> AsyncGenerator[Dict, None]:
         nonlocal count
         content = data["data"]
-        item_ = Item(
-            content=Content(content["body"]),
-            author=Author(hashlib.sha1(bytes(content["author"], encoding="utf-8")).hexdigest()),
-            created_at=CreatedAt(str(format_timestamp(content["created_utc"]))),
-            domain=Domain("reddit.com"),
-            url=Url("https://reddit.com" + content["permalink"]),
-        )
+        item_ = {
+            "content": content["body"],
+            "author": hashlib.sha1(bytes(content["author"], encoding="utf-8")).hexdigest(),
+            "created_at": format_timestamp(content["created_utc"]),
+            "domain": "reddit.com",
+            "url": "https://reddit.com" + content["permalink"],
+        }
         if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
-            if len(tokenizer.encode(item_.content).tokens) <= 512 and count < limit:
+            if len(tokenizer.encode(item_["content"]).tokens) > 512:
+                logging.info(f"[Reddit] ({ip}) Skipping comment with more than 512 tokens")
+                return
+            if count < limit:
                 yield item_
                 count += 1
 
     async def more(__data__):
         for __item__ in []:
-            yield Item()
+            yield {}
 
-    async def kind(data) -> AsyncGenerator[Item, None]:
+    async def kind(data) -> AsyncGenerator[Dict, None]:
         nonlocal count
         if count >= limit:
             return
@@ -524,7 +520,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
         except Exception as err:
             raise err
 
-    async def listing(data) -> AsyncGenerator[Item, None]:
+    async def listing(data) -> AsyncGenerator[Dict, None]:
         nonlocal count
         for item_data in data["data"]["children"]:
             if count >= limit:
@@ -537,47 +533,42 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
     resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
     _url = url + ".json"
     logging.info(f"[Reddit] ({ip}) Scraping - getting {_url}")
-    try:
-        async with session.get(_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-            if response.status == 429:
-                retry_after = int(response.headers.get("retry-after", 35))
-                logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Retrying after {retry_after} seconds.")
-                await asyncio.sleep(retry_after)
-                return
+    async with semaphore, session.get(_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
+        if response.status == 429:
+            retry_after = int(response.headers.get("retry-after", 35))
+            logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Retrying after {retry_after} seconds.")
+            await asyncio.sleep(retry_after)
+            return
 
-            if response.status == 200 and response.content_type == 'application/json':
-                response_json = await response.json()
-                [_post, comments] = response_json
-                try:
-                    async for item in kind(_post):
+        if response.status == 200 and response.content_type == 'application/json':
+            response_json = await response.json()
+            [_post, comments] = response_json
+            try:
+                async for item in kind(_post):
+                    if count < limit:
+                        yield item
+                        count += 1
+            except GeneratorExit:
+                logging.info(f"[Reddit] ({ip}) Scraper generator exit...")
+                return
+            except Exception as e:
+                logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
+
+            try:
+                for result in comments["data"]["children"]:
+                    async for item in kind(result):
                         if count < limit:
                             yield item
                             count += 1
-                except GeneratorExit:
-                    logging.info(f"[Reddit] ({ip}) Scraper generator exit...")
-                    return
-                except Exception as e:
-                    logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
+            except GeneratorExit:
+                logging.info(f"[Reddit] ({ip}) Scraper generator exit...")
+                return
+            except Exception as e:
+                logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
+        else:
+            logging.error(f"[Reddit] ({ip}) Unexpected response: {response.status} {response.content_type}")
 
-                try:
-                    for result in comments["data"]["children"]:
-                        async for item in kind(result):
-                            if count < limit:
-                                yield item
-                                count += 1
-                except GeneratorExit:
-                    logging.info(f"[Reddit] ({ip}) Scraper generator exit...")
-                    return
-                except Exception as e:
-                    logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
-            else:
-                logging.error(f"[Reddit] ({ip}) Unexpected response: {response.status} {response.content_type}")
-    except aiohttp.ClientConnectionError:
-        logging.error(f"[Reddit] ({ip}) Client connection error. Skipping this post.")
-    except RuntimeError:
-        logging.error(f"[Reddit] ({ip}) Runtime error due to closed session. Skipping this post.")
-
-def split_strings_subreddit_name(input_string):
+def split_strings_subreddit_name(input_string: str) -> str:
     words = []
     start = 0
 
@@ -589,39 +580,34 @@ def split_strings_subreddit_name(input_string):
     words.append(input_string[start:])
     return ' '.join(words)
 
-async def scrap_subreddit_new_layout(session: ClientSession, ip: str, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
+async def scrap_subreddit_new_layout(session: ClientSession, ip: str, subreddit_url: str, count: int, limit: int, semaphore: asyncio.Semaphore) -> AsyncGenerator[Dict, None]:
     if count >= limit:
         return
-    try:
-        async with session.get(subreddit_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-            if response.status == 429:
-                retry_after = int(response.headers.get("retry-after", 35))
-                logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Retrying after {retry_after} seconds.")
-                await asyncio.sleep(retry_after)
-                return
+    async with semaphore, session.get(subreddit_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
+        if response.status == 429:
+            retry_after = int(response.headers.get("retry-after", 35))
+            logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Retrying after {retry_after} seconds.")
+            await asyncio.sleep(retry_after)
+            return
 
-            html_content = await response.text()
-            html_tree = fromstring(html_content)
-            for post in html_tree.xpath("//shreddit-post/@permalink"):
-                if count >= limit:
-                    break
-                url = post
-                if url.startswith("/r/"):
-                    url = "https://www.reddit.com" + post
-                await asyncio.sleep(1)
-                try:
-                    if "https" not in url:
-                        url = f"https://reddit.com{url}"
-                    async for item in scrap_post(session, ip, url, count, limit):
-                        if count < limit:
-                            yield item
-                            count += 1
-                except Exception as e:
-                    logging.exception(f"[Reddit] ({ip}) Error scraping post {url}: {e}")
-    except aiohttp.ClientConnectionError:
-        logging.error(f"[Reddit] ({ip}) Client connection error while scraping subreddit new layout.")
-    except RuntimeError:
-        logging.error(f"[Reddit] ({ip}) Runtime error due to closed session while scraping subreddit new layout.")
+        html_content = await response.text()
+        html_tree = fromstring(html_content)
+        for post in html_tree.xpath("//shreddit-post/@permalink"):
+            if count >= limit:
+                break
+            url = post
+            if url.startswith("/r/"):
+                url = "https://www.reddit.com" + post
+            await asyncio.sleep(1)
+            try:
+                if "https" not in url:
+                    url = f"https://reddit.com{url}"
+                async for item in scrap_post(session, ip, url, count, limit, semaphore):
+                    if count < limit:
+                        yield item
+                        count += 1
+            except Exception as e:
+                logging.exception(f"[Reddit] ({ip}) Error scraping post {url}: {e}")
 
 def find_permalinks(data):
     if isinstance(data, dict):
@@ -633,7 +619,7 @@ def find_permalinks(data):
         for item in data:
             yield from find_permalinks(item)
 
-async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
+async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: str, count: int, limit: int, semaphore: asyncio.Semaphore) -> AsyncGenerator[Dict, None]:
     if count >= limit:
         return
     url_to_fetch = subreddit_url
@@ -645,38 +631,33 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
         url_to_fetch = url_to_fetch.replace("/new/new/.json", "/new.json")
     logging.info(f"[Reddit] ({ip}) [JSON MODE] opening: {url_to_fetch}")
     await asyncio.sleep(1)
-    try:
-        async with session.get(url_to_fetch, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-            if response.status == 429:
-                retry_after = int(response.headers.get("retry-after", 35))
-                logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Retrying after {retry_after} seconds.")
-                await asyncio.sleep(retry_after)
-                return
+    async with semaphore, session.get(url_to_fetch, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
+        if response.status == 429:
+            retry_after = int(response.headers.get("retry-after", 35))
+            logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Retrying after {retry_after} seconds.")
+            await asyncio.sleep(retry_after)
+            return
 
-            if response.status == 200 and response.content_type == 'application/json':
-                data = await response.json()
-                permalinks = list(find_permalinks(data))
+        if response.status == 200 and response.content_type == 'application/json':
+            data = await response.json()
+            permalinks = list(find_permalinks(data))
 
-                for permalink in permalinks:
-                    if count >= limit:
-                        break
-                    try:
-                        if random.random() < SKIP_POST_PROBABILITY:
-                            url = permalink
-                            if "https" not in url:
-                                url = f"https://reddit.com{url}"
-                            async for item in scrap_post(session, ip, url, count, limit):
-                                if count < limit:
-                                    yield item
-                                    count += 1
-                    except Exception as e:
-                        logging.exception(f"[Reddit] ({ip}) [JSON MODE] Error detected: {e}")
-            else:
-                logging.error(f"[Reddit] ({ip}) Unexpected response: {response.status} {response.content_type}")
-    except aiohttp.ClientConnectionError:
-        logging.error(f"[Reddit] ({ip}) Client connection error while scraping subreddit JSON.")
-    except RuntimeError:
-        logging.error(f"[Reddit] ({ip}) Runtime error due to closed session while scraping subreddit JSON.")
+            for permalink in permalinks:
+                if count >= limit:
+                    break
+                try:
+                    if random.random() < SKIP_POST_PROBABILITY:
+                        url = permalink
+                        if "https" not in url:
+                            url = f"https://reddit.com{url}"
+                        async for item in scrap_post(session, ip, url, count, limit, semaphore):
+                            if count < limit:
+                                yield item
+                                count += 1
+                except Exception as e:
+                    logging.exception(f"[Reddit] ({ip}) [JSON MODE] Error detected: {e}")
+        else:
+            logging.error(f"[Reddit] ({ip}) Unexpected response: {response.status} {response.content_type}")
 
 DEFAULT_OLDNESS_SECONDS = 36000
 DEFAULT_MAXIMUM_ITEMS = 25
@@ -685,40 +666,29 @@ DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3
 DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
 
-def read_parameters(parameters):
-    if parameters and isinstance(parameters, dict):
-        max_oldness_seconds = parameters.get("max_oldness_seconds", DEFAULT_OLDNESS_SECONDS)
-        maximum_items_to_collect = parameters.get("maximum_items_to_collect", DEFAULT_MAXIMUM_ITEMS)
-        min_post_length = parameters.get("min_post_length", DEFAULT_MIN_POST_LENGTH)
-        nb_subreddit_attempts = parameters.get("nb_subreddit_attempts", DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS)
-        new_layout_scraping_weight = parameters.get("new_layout_scraping_weight", DEFAULT_LAYOUT_SCRAPING_WEIGHT)
-        skip_post_probability = parameters.get("skip_post_probability", DEFAULT_SKIP_PROBA)
-    else:
-        max_oldness_seconds = DEFAULT_OLDNESS_SECONDS
-        maximum_items_to_collect = DEFAULT_MAXIMUM_ITEMS
-        min_post_length = DEFAULT_MIN_POST_LENGTH
-        nb_subreddit_attempts = DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS
-        new_layout_scraping_weight = DEFAULT_LAYOUT_SCRAPING_WEIGHT
-        skip_post_probability = DEFAULT_SKIP_PROBA
-
+def read_parameters(parameters: dict) -> Tuple[int, int, int, int, float, float]:
+    max_oldness_seconds = parameters.get("max_oldness_seconds", DEFAULT_OLDNESS_SECONDS)
+    maximum_items_to_collect = parameters.get("maximum_items_to_collect", DEFAULT_MAXIMUM_ITEMS)
+    min_post_length = parameters.get("min_post_length", DEFAULT_MIN_POST_LENGTH)
+    nb_subreddit_attempts = parameters.get("nb_subreddit_attempts", DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS)
+    new_layout_scraping_weight = parameters.get("new_layout_scraping_weight", DEFAULT_LAYOUT_SCRAPING_WEIGHT)
+    skip_post_probability = parameters.get("skip_post_probability", DEFAULT_SKIP_PROBA)
     return max_oldness_seconds, maximum_items_to_collect, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, skip_post_probability
 
-def correct_reddit_url(url):
+def correct_reddit_url(url: str) -> str:
     parts = url.split("https://reddit.comhttps://", 1)
     if len(parts) == 2:
-        corrected_url = "https://" + parts[1]
-        return corrected_url
+        return "https://" + parts[1]
     return url
 
-def post_process_item(item):    
+def post_process_item(item: Dict) -> Dict:
     try:
         if len(item['content']) > 10:
             subreddit_name = extract_subreddit_name(item["url"])
-            if subreddit_name is None:
-                return item
-            segmented_subreddit_strs = segment(subreddit_name)
-            segmented_subreddit_name = " ".join(segmented_subreddit_strs)
-            item["content"] = item["content"] + ". - " + segmented_subreddit_name + " ," + subreddit_name
+            if subreddit_name:
+                segmented_subreddit_strs = segment(subreddit_name)
+                segmented_subreddit_name = " ".join(segmented_subreddit_strs)
+                item["content"] = item["content"] + ". - " + segmented_subreddit_name + " ," + subreddit_name
     except Exception as e:
         logging.exception(f"[Reddit post_process_item] Word segmentation failed: {e}, ignoring...")
     try:
@@ -727,7 +697,7 @@ def post_process_item(item):
         logging.warning(f"[Reddit] failed to correct the URL of item {item['url']}")
     return item
 
-def is_valid_item(item, min_post_length):
+def is_valid_item(item: Dict, min_post_length: int) -> bool:
     return (
         len(item["content"]) >= min_post_length and
         not item["url"].startswith("https://reddit.comhttps:") and
@@ -735,55 +705,51 @@ def is_valid_item(item, min_post_length):
         item["content"] != "[deleted]"
     )
 
-async def query(parameters: dict) -> AsyncGenerator[Item, None]:
+async def query(parameters: dict) -> AsyncGenerator[Dict, None]:
     global MAX_EXPIRATION_SECONDS, SKIP_POST_PROBABILITY
-    (
-        max_oldness_seconds,
-        MAXIMUM_ITEMS_TO_COLLECT,
-        min_post_length,
-        nb_subreddit_attempts,
-        new_layout_scraping_weight,
-        SKIP_POST_PROBABILITY
-    ) = read_parameters(parameters)
+    max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, SKIP_POST_PROBABILITY = read_parameters(parameters)
     logging.info(f"[Reddit] Input parameters: {parameters}")
     MAX_EXPIRATION_SECONDS = max_oldness_seconds
-    yielded_items = 0  # Counter for the number of yielded items
+    yielded_items = 0
 
     await asyncio.sleep(random.uniform(3, 15))
     proxies = load_proxies('/exorde/ips.txt')
     sessions = [await create_session_with_proxy(ip, port, cookie_file) for ip, port, cookie_file in proxies]
 
-    try:
-        scrape_tasks = [scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight, nb_subreddit_attempts) for session, ip in sessions]
-        results = await asyncio.gather(*scrape_tasks)
+    semaphore = asyncio.Semaphore(10)  # Limit concurrent requests
 
-        for items in results:
-            for item in items:
-                if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
-                    break
-                yield item
-                yielded_items += 1
+    try:
+        async with asyncio.TaskGroup() as tg:
+            scrape_tasks = [tg.create_task(scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight, semaphore)) for session, ip in sessions]
+            results = await tg.gather(*scrape_tasks)
+
+            for items in results:
+                for item in items:
+                    if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
+                        break
+                    yield item
+                    yielded_items += 1
     finally:
         for session, _ in sessions:
             await session.close()
-            await asyncio.sleep(0.5)  # Add delay between each request
+            await asyncio.sleep(0.1)
 
-async def scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight, nb_subreddit_attempts):
+async def scrape_with_session(session: ClientSession, ip: str, parameters: dict, max_oldness_seconds: int, MAXIMUM_ITEMS_TO_COLLECT: int, min_post_length: int, new_layout_scraping_weight: float, semaphore: asyncio.Semaphore) -> List[Dict]:
     items = []
-    count = 0  # Counter for items collected within the session
-    for i in range(nb_subreddit_attempts):
+    count = 0
+    for i in range(DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS):
         await asyncio.sleep(random.uniform(1, i))
-        url = await generate_url(ip)
+        url = await generate_url(session, ip)
         if not url:
             continue
         if url.endswith("/new/new/.json"):
             url = url.replace("/new/new/.json", "/new.json")
-        logging.info(f"[Reddit] ({ip}) Attempt {(i+1)}/{nb_subreddit_attempts} Scraping {url} with max oldness of {max_oldness_seconds}")
+        logging.info(f"[Reddit] ({ip}) Attempt {(i+1)}/{DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS} Scraping {url} with max oldness of {max_oldness_seconds}")
         if "reddit.com" not in url:
             raise ValueError(f"Not a Reddit URL {url}")
         url_parameters = url.split("reddit.com")[1].split("/")[1:]
         if "comments" in url_parameters:
-            async for result in scrap_post(session, ip, url, count, MAXIMUM_ITEMS_TO_COLLECT):
+            async for result in scrap_post(session, ip, url, count, MAXIMUM_ITEMS_TO_COLLECT, semaphore):
                 result = post_process_item(result)
                 if is_valid_item(result, min_post_length):
                     logging.info(f"[Reddit] ({ip}) Found Reddit post: {result}")
@@ -795,7 +761,7 @@ async def scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXI
             selected_function = scrap_subreddit_json
             if random.random() < new_layout_scraping_weight:
                 selected_function = scrap_subreddit_new_layout
-            async for result in selected_function(session, ip, url, count, MAXIMUM_ITEMS_TO_COLLECT):
+            async for result in selected_function(session, ip, url, count, MAXIMUM_ITEMS_TO_COLLECT, semaphore):
                 result = post_process_item(result)
                 if is_valid_item(result, min_post_length):
                     logging.info(f"[Reddit] ({ip}) Found Reddit comment: {result}")
@@ -805,7 +771,7 @@ async def scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXI
                     break
     return items
 
-def load_proxies(file_path):
+def load_proxies(file_path: str) -> List[Tuple[str, str, str]]:
     with open(file_path, 'r') as file:
         lines = file.readlines()
     proxies = []
@@ -815,6 +781,3 @@ def load_proxies(file_path):
         cookie_file = cookie_file.split('=')[1]
         proxies.append((ip, port, f'/exorde/{cookie_file}'))
     return proxies
-
-# Ensure you have 'aiohttp_socks' installed to use the ProxyConnector.
-# You can install it using pip: pip install aiohttp_socks
