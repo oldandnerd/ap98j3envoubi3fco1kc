@@ -433,9 +433,8 @@ async def load_cookies_from_file(file_path):
     return cookies_data
 
 async def create_session_with_proxy(ip, port, cookies_file_path):
-    # Create a TCPConnector for each proxy with connection pooling
-    tcp_connector = TCPConnector(limit=10, limit_per_host=2)
-    connector = ProxyConnector.from_url(f"socks5://{ip}:{port}", connector=tcp_connector)
+    # Create a ProxyConnector for each proxy with connection pooling
+    connector = ProxyConnector.from_url(f"socks5://{ip}:{port}")
     cookies_data = await load_cookies_from_file(cookies_file_path)
     jar = CookieJar()
     for cookie in cookies_data:
