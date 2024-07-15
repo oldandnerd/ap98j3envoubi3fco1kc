@@ -486,9 +486,9 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
             url=Url("https://reddit.com" + content["url"]),
         )
         if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
-            # Skip items longer than 512 tokens
-            if len(tokenizer.encode(item_.content).tokens) > 512:
-                logging.info(f"[Reddit] ({ip}) Skipping post with more than 512 tokens")
+            # Skip items longer than 300 tokens
+            if len(tokenizer.encode(item_.content).tokens) > 300:
+                logging.info(f"[Reddit] ({ip}) Skipping post with more than 300 tokens")
                 return
             if count < limit:
                 yield item_
@@ -506,9 +506,9 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
             url=Url("https://reddit.com" + content["permalink"]),
         )
         if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
-            # Skip items longer than 512 tokens
-            if len(tokenizer.encode(item_.content).tokens) > 512:
-                logging.info(f"[Reddit] ({ip}) Skipping comment with more than 512 tokens")
+            # Skip items longer than 300 tokens
+            if len(tokenizer.encode(item_.content).tokens) > 300:
+                logging.info(f"[Reddit] ({ip}) Skipping comment with more than 300 tokens")
                 return
             if count < limit:
                 yield item_
