@@ -419,6 +419,7 @@ subreddits_top_1000 = [
     "r/Calgary","r/furry","r/csMajors","r/Bedbugs","r/DBZDokkanBattle","r/mumbai","r/popheadscirclejerk","r/marvelmemes","r/Egypt","r/Topster",
 ]
 
+
 async def load_cookies_from_file(file_path: str) -> Dict:
     with open(file_path, 'r') as file:
         return json.load(file)
@@ -719,16 +720,15 @@ async def query(parameters: dict) -> AsyncGenerator[Dict, None]:
     semaphore = asyncio.Semaphore(10)  # Limit concurrent requests
 
     try:
-        async with asyncio.TaskGroup() as tg:
-            scrape_tasks = [tg.create_task(scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight, semaphore)) for session, ip in sessions]
-            results = await tg.gather(*scrape_tasks)
+        scrape_tasks = [scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight, semaphore) for session, ip in sessions]
+        results = await asyncio.gather(*scrape_tasks)
 
-            for items in results:
-                for item in items:
-                    if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
-                        break
-                    yield item
-                    yielded_items += 1
+        for items in results:
+            for item in items:
+                if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
+                    break
+                yield item
+                yielded_items += 1
     finally:
         for session, _ in sessions:
             await session.close()
