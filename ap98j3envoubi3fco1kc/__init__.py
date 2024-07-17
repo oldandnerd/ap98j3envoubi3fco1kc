@@ -443,7 +443,7 @@ async def create_session_with_proxy(ip, port, cookies_file_path):
     session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
     session._connector = tcp_connector
     logging.info(f"Created session with proxy {ip}:{port} and cookies from {cookies_file_path}")
-    return session, f"{ip}:{port}"
+    return session, tcp_connector, f"{ip}:{port}"
 
 async def generate_url(session: ClientSession, ip: str):
     for _ in range(3):  # Try up to 3 times to get a valid URL
@@ -683,39 +683,14 @@ DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
 
 def read_parameters(parameters):
-    # Check if parameters is not empty or None
     if parameters and isinstance(parameters, dict):
-        try:
-            max_oldness_seconds = parameters.get("max_oldness_seconds", DEFAULT_OLDNESS_SECONDS)
-        except KeyError:
-            max_oldness_seconds = DEFAULT_OLDNESS_SECONDS
-
-        try:
-            maximum_items_to_collect = parameters.get("maximum_items_to_collect", DEFAULT_MAXIMUM_ITEMS)
-        except KeyError:
-            maximum_items_to_collect = DEFAULT_MAXIMUM_ITEMS
-
-        try:
-            min_post_length = parameters.get("min_post_length", DEFAULT_MIN_POST_LENGTH)
-        except KeyError:
-            min_post_length = DEFAULT_MIN_POST_LENGTH
-
-        try:
-            nb_subreddit_attempts = parameters.get("nb_subreddit_attempts", DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS)
-        except KeyError:
-            nb_subreddit_attempts = DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS
-
-        try:
-            new_layout_scraping_weight = parameters.get("new_layout_scraping_weight", DEFAULT_LAYOUT_SCRAPING_WEIGHT)
-        except KeyError:
-            new_layout_scraping_weight = DEFAULT_LAYOUT_SCRAPING_WEIGHT
-
-        try:
-            skip_post_probability = parameters.get("skip_post_probability", DEFAULT_SKIP_PROBA)
-        except KeyError:
-            skip_post_probability = DEFAULT_SKIP_PROBA
+        max_oldness_seconds = parameters.get("max_oldness_seconds", DEFAULT_OLDNESS_SECONDS)
+        maximum_items_to_collect = parameters.get("maximum_items_to_collect", DEFAULT_MAXIMUM_ITEMS)
+        min_post_length = parameters.get("min_post_length", DEFAULT_MIN_POST_LENGTH)
+        nb_subreddit_attempts = parameters.get("nb_subreddit_attempts", DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS)
+        new_layout_scraping_weight = parameters.get("new_layout_scraping_weight", DEFAULT_LAYOUT_SCRAPING_WEIGHT)
+        skip_post_probability = parameters.get("skip_post_probability", DEFAULT_SKIP_PROBA)
     else:
-        # Assign default values if parameters is empty or None
         max_oldness_seconds = DEFAULT_OLDNESS_SECONDS
         maximum_items_to_collect = DEFAULT_MAXIMUM_ITEMS
         min_post_length = DEFAULT_MIN_POST_LENGTH
@@ -724,6 +699,7 @@ def read_parameters(parameters):
         skip_post_probability = DEFAULT_SKIP_PROBA
 
     return max_oldness_seconds, maximum_items_to_collect, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, skip_post_probability
+
 
 def correct_reddit_url(url):
     parts = url.split("https://reddit.comhttps://", 1)
@@ -776,7 +752,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     sessions = [await create_session_with_proxy(ip, port, cookie_file) for ip, port, cookie_file in proxies]
 
     try:
-        scrape_tasks = [scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight) for session, ip in sessions]
+        scrape_tasks = [scrape_with_session(session, tcp_connector, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight) for session, tcp_connector, ip in sessions]
         results = await asyncio.gather(*scrape_tasks)
 
         for items in results:
@@ -786,21 +762,22 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
                 yield item
                 yielded_items += 1
     finally:
-        for session, _ in sessions:
+        for session, tcp_connector, _ in sessions:
             await session.close()
+            await tcp_connector.close()
             await asyncio.sleep(0.1)
 
-async def scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight):
+async def scrape_with_session(session, tcp_connector, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight):
     items = []
-    count = 0  # Counter for items collected within the session
-    for i in range(DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS):
+    count = 0
+    for i in range(nb_subreddit_attempts):
         await asyncio.sleep(random.uniform(1, i))
         url = await generate_url(session, ip)
         if not url:
             continue
         if url.endswith("/new/new/.json"):
             url = url.replace("/new/new/.json", "/new.json")
-        logging.info(f"[Reddit] ({ip}) Attempt {(i+1)}/{DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS} Scraping {url} with max oldness of {max_oldness_seconds}")
+        logging.info(f"[Reddit] ({ip}) Attempt {(i+1)}/{nb_subreddit_attempts} Scraping {url} with max oldness of {max_oldness_seconds}")
         if "reddit.com" not in url:
             raise ValueError(f"Not a Reddit URL {url}")
         url_parameters = url.split("reddit.com")[1].split("/")[1:]
