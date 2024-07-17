@@ -444,21 +444,30 @@ async def create_session_with_proxy(ip, port, cookies_file_path):
     logging.info(f"Created session with proxy {ip}:{port} and cookies from {cookies_file_path}")
     return session, tcp_connector, f"{ip}:{port}"
 
-async def fetch_with_retry(session, url, headers, retries=3, backoff_factor=0.3):
+async def handle_rate_limit(response, ip):
+    if response.status == 429:
+        retry_after = int(response.headers.get("retry-after", 10))
+        logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Retrying after {retry_after} seconds.")
+        await asyncio.sleep(retry_after)
+        return True
+    return False
+
+
+async def fetch_with_retry(session, url, headers, ip, retries=3, backoff_factor=0.3):
     for attempt in range(retries):
         try:
             async with session.get(url, headers=headers, timeout=BASE_TIMEOUT) as response:
-                if response.status == 429:
-                    retry_after = int(response.headers.get("retry-after", 35))
-                    logging.warning(f"Rate limit exceeded. Retrying after {retry_after} seconds.")
-                    await asyncio.sleep(retry_after)
+                if await handle_rate_limit(response, ip):
                     continue
                 response.raise_for_status()
                 return await response.json()
         except aiohttp.ClientError as e:
-            logging.warning(f"Request failed: {e}. Retrying...")
+            logging.warning(f"[Reddit] ({ip}) Request failed: {e}. Retrying...")
             await asyncio.sleep(backoff_factor * (2 ** attempt))
-    raise aiohttp.ClientError(f"Failed to fetch {url} after {retries} attempts.")
+    raise aiohttp.ClientError(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts.")
+
+
+
 
 
 async def generate_url(ip: str) -> str:
@@ -611,10 +620,7 @@ async def scrap_subreddit_new_layout(session: ClientSession, ip: str, subreddit_
     if count >= limit:
         return
     async with session.get(subreddit_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-        if response.status == 429:
-            retry_after = int(response.headers.get("retry-after", 35))
-            logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Retrying after {retry_after} seconds.")
-            await asyncio.sleep(retry_after)
+        if await handle_rate_limit(response, ip):
             return
 
         html_content = await response.text()
@@ -659,10 +665,7 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
     logging.info(f"[Reddit] ({ip}) [JSON MODE] opening: {url_to_fetch}")
     await asyncio.sleep(1)
     async with session.get(url_to_fetch, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-        if response.status == 429:
-            retry_after = int(response.headers.get("retry-after", 35))
-            logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Retrying after {retry_after} seconds.")
-            await asyncio.sleep(retry_after)
+        if await handle_rate_limit(response, ip):
             return
 
         if response.status == 200 and response.content_type == 'application/json':
