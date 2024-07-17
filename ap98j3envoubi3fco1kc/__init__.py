@@ -574,7 +574,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
     logging.info(f"[Reddit] ({ip}) Scraping - getting {_url}")
     
     try:
-        response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)})
+        response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, ip=ip)
         [_post, comments] = response_json
         try:
             async for item in kind(_post):
@@ -688,6 +688,7 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
                     logging.exception(f"[Reddit] ({ip}) [JSON MODE] Error detected: {e}")
         else:
             logging.error(f"[Reddit] ({ip}) Unexpected response: {response.status} {response.content_type}")
+
 
 DEFAULT_OLDNESS_SECONDS = 36000
 DEFAULT_MAXIMUM_ITEMS = 25
