@@ -12,7 +12,6 @@ from datetime import datetime as datett, datetime
 from datetime import timezone
 import hashlib
 import logging
-import socket
 from lxml.html import fromstring
 import re
 from exorde_data import (
@@ -434,14 +433,14 @@ async def load_cookies_from_file(file_path):
     return cookies_data
 
 async def create_session_with_proxy(ip, port, cookies_file_path):
-    tcp_connector = TCPConnector(family=socket.AF_INET)  # Force IPv4
-    proxy_connector = ProxyConnector.from_url(f"socks5://{ip}:{port}", rdns=True)
+    # Create a ProxyConnector for each proxy with connection pooling
+    tcp_connector = TCPConnector(limit=10, limit_per_host=2)  # Create a new TCPConnector for each proxy
+    connector = ProxyConnector.from_url(f"socks5://{ip}:{port}", rdns=True)
     cookies_data = await load_cookies_from_file(cookies_file_path)
     jar = CookieJar()
     for cookie in cookies_data:
         jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
-    session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
-    session._connector = tcp_connector
+    session = ClientSession(connector=connector, cookie_jar=jar)
     logging.info(f"Created session with proxy {ip}:{port} and cookies from {cookies_file_path}")
     return session, f"{ip}:{port}"
 
@@ -478,6 +477,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
 
     async def post(data) -> AsyncGenerator[Item, None]:
         nonlocal count
+        """t3"""
         content = data["data"]
         item_ = Item(
             content=Content(content["selftext"]),
@@ -488,6 +488,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
             url=Url("https://reddit.com" + content["permalink"]),
         )
         if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
+            # Skip items longer than 512 tokens
             if len(tokenizer.encode(item_.content).tokens) > 512:
                 logging.info(f"[Reddit] ({ip}) Skipping post with more than 512 tokens")
                 return
@@ -497,6 +498,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
 
     async def comment(data) -> AsyncGenerator[Item, None]:
         nonlocal count
+        """t1"""
         content = data["data"]
         item_ = Item(
             content=Content(content["body"]),
@@ -506,6 +508,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
             url=Url("https://reddit.com" + content["permalink"]),
         )
         if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
+            # Skip items longer than 512 tokens
             if len(tokenizer.encode(item_.content).tokens) > 512:
                 logging.info(f"[Reddit] ({ip}) Skipping comment with more than 512 tokens")
                 return
@@ -581,8 +584,6 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
                 logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
         else:
             logging.error(f"[Reddit] ({ip}) Unexpected response: {response.status} {response.content_type}")
-
-
 
 def split_strings_subreddit_name(input_string):
     words = []
@@ -769,7 +770,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     ) = read_parameters(parameters)
     logging.info(f"[Reddit] Input parameters: {parameters}")
     MAX_EXPIRATION_SECONDS = max_oldness_seconds
-    yielded_items = 0
+    yielded_items = 0  # Counter for the number of yielded items
 
     await asyncio.sleep(random.uniform(3, 15))
     proxies = load_proxies('/exorde/ips.txt')
@@ -788,7 +789,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     finally:
         for session, _ in sessions:
             await session.close()
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.1)  # Add delay between each request
 
 async def scrape_with_session(session, ip, parameters, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, new_layout_scraping_weight):
     items = []
