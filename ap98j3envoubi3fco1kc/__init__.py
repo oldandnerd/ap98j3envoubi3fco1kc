@@ -5,10 +5,9 @@ from aiohttp_socks import ProxyConnector
 from aiohttp import ClientSession, CookieJar, TCPConnector
 from yarl import URL
 import asyncio
-from lxml import html
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator
 import time
-from datetime import datetime as datett, datetime
+from datetime import datetime as datett
 from datetime import timezone
 import hashlib
 import logging
@@ -445,7 +444,24 @@ async def create_session_with_proxy(ip, port, cookies_file_path):
     logging.info(f"Created session with proxy {ip}:{port} and cookies from {cookies_file_path}")
     return session, tcp_connector, f"{ip}:{port}"
 
-async def generate_url(session: ClientSession, ip: str):
+async def fetch_with_retry(session, url, headers, retries=3, backoff_factor=0.3):
+    for attempt in range(retries):
+        try:
+            async with session.get(url, headers=headers, timeout=BASE_TIMEOUT) as response:
+                if response.status == 429:
+                    retry_after = int(response.headers.get("retry-after", 35))
+                    logging.warning(f"Rate limit exceeded. Retrying after {retry_after} seconds.")
+                    await asyncio.sleep(retry_after)
+                    continue
+                response.raise_for_status()
+                return await response.json()
+        except aiohttp.ClientError as e:
+            logging.warning(f"Request failed: {e}. Retrying...")
+            await asyncio.sleep(backoff_factor * (2 ** attempt))
+    raise aiohttp.ClientError(f"Failed to fetch {url} after {retries} attempts.")
+
+
+async def generate_url(ip: str) -> str:
     for _ in range(3):  # Try up to 3 times to get a valid URL
         selected_subreddit_ = "https://reddit.com/" + random.choice(
             subreddits_top_225 if random.random() < 0.5 else subreddits_top_1000
@@ -547,40 +563,35 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
     resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
     _url = url + ".json"
     logging.info(f"[Reddit] ({ip}) Scraping - getting {_url}")
-    async with session.get(_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-        if response.status == 429:
-            retry_after = int(response.headers.get("retry-after", 35))
-            logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Retrying after {retry_after} seconds.")
-            await asyncio.sleep(retry_after)
+    
+    try:
+        response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)})
+        [_post, comments] = response_json
+        try:
+            async for item in kind(_post):
+                if count < limit:
+                    yield item
+                    count += 1
+        except GeneratorExit:
+            logging.info(f"[Reddit] ({ip}) Scraper generator exit...")
             return
+        except Exception as e:
+            logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
 
-        if response.status == 200 and response.content_type == 'application/json':
-            response_json = await response.json()
-            [_post, comments] = response_json
-            try:
-                async for item in kind(_post):
+        try:
+            for result in comments["data"]["children"]:
+                async for item in kind(result):
                     if count < limit:
                         yield item
                         count += 1
-            except GeneratorExit:
-                logging.info(f"[Reddit] ({ip}) Scraper generator exit...")
-                return
-            except Exception as e:
-                logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
+        except GeneratorExit:
+            logging.info(f"[Reddit] ({ip}) Scraper generator exit...")
+            return
+        except Exception as e:
+            logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
+    except aiohttp.ClientError as e:
+        logging.error(f"[Reddit] ({ip}) Failed to fetch {_url}: {e}")
 
-            try:
-                for result in comments["data"]["children"]:
-                    async for item in kind(result):
-                        if count < limit:
-                            yield item
-                            count += 1
-            except GeneratorExit:
-                logging.info(f"[Reddit] ({ip}) Scraper generator exit...")
-                return
-            except Exception as e:
-                logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
-        else:
-            logging.error(f"[Reddit] ({ip}) Unexpected response: {response.status} {response.content_type}")
 
 
 
@@ -752,7 +763,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     sessions = [await create_session_with_proxy(ip, port, cookie_file) for ip, port, cookie_file in proxies]
 
     try:
-        scrape_tasks = [scrape_with_session(session, tcp_connector, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight) for session, tcp_connector, ip in sessions]
+        scrape_tasks = [scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight) for session, _, ip in sessions]
         results = await asyncio.gather(*scrape_tasks)
 
         for items in results:
@@ -767,12 +778,13 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
             await tcp_connector.close()
             await asyncio.sleep(0.1)
 
-async def scrape_with_session(session, tcp_connector, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight):
+
+async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight):
     items = []
     count = 0
     for i in range(nb_subreddit_attempts):
         await asyncio.sleep(random.uniform(1, i))
-        url = await generate_url(session, ip)
+        url = await generate_url(ip)
         if not url:
             continue
         if url.endswith("/new/new/.json"):
@@ -804,6 +816,7 @@ async def scrape_with_session(session, tcp_connector, ip, max_oldness_seconds, M
                     break
     return items
 
+
 def load_proxies(file_path):
     with open(file_path, 'r') as file:
         lines = file.readlines()
@@ -814,6 +827,7 @@ def load_proxies(file_path):
         cookie_file = cookie_file.split('=')[1]
         proxies.append((ip, port, f'/exorde/{cookie_file}'))
     return proxies
+
 
 # Ensure you have 'aiohttp_socks' installed to use the ProxyConnector.
 # You can install it using pip: pip install aiohttp_socks
