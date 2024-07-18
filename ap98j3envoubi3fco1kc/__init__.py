@@ -5,7 +5,7 @@ from aiohttp_socks import ProxyConnector
 from aiohttp import ClientSession, CookieJar, TCPConnector
 from yarl import URL
 import asyncio
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List
 import time
 from datetime import datetime as datett
 from datetime import timezone
@@ -151,20 +151,12 @@ async def get_new_ip_and_update_session(session, tcp_connector):
     logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
     return new_session, new_tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
 
-
-
-
-
 async def handle_rate_limit(response, session, tcp_connector):
     if response.status == 429:
         logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
         new_session, new_tcp_connector, new_ip = await get_new_ip_and_update_session(session, tcp_connector)
         return new_session, new_tcp_connector, new_ip
     return session, tcp_connector, None
-
-
-
-
 
 async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, backoff_factor=0.3):
     for attempt in range(retries):
@@ -190,8 +182,6 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     logging.error(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
     return None
-
-
 
 async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
@@ -301,9 +291,6 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] ({ip}) Failed to fetch {_url}: {e}")
 
-
-
-
 def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
     current_timestamp = int(time.time())  # Get the current UNIX timestamp
     return (current_timestamp - int(input_timestamp)) <= timeframe_sec
@@ -365,8 +352,6 @@ async def scrap_subreddit_new_layout(session: ClientSession, ip: str, subreddit_
             except Exception as e:
                 logging.exception(f"[Reddit] ({ip}) Error scraping post {url}: {e}")
 
-
-
 def find_permalinks(data):
     if isinstance(data, dict):
         if 'permalink' in data:
@@ -416,10 +401,6 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
 
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] ({ip}) Failed to fetch {url_to_fetch}: {e}")
-
-
-
-
 
 def correct_reddit_url(url):
     parts = url.split("https://reddit.comhttps://", 1)
@@ -487,8 +468,6 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
         for session, tcp_connector, _ in sessions:
             await close_session_and_connector(session, tcp_connector)
             await asyncio.sleep(0.1)
-
-
 
 async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, tcp_connector):
     items = []
