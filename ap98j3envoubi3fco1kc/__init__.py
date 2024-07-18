@@ -35,7 +35,7 @@ tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
 
 logging.basicConfig(level=logging.INFO)
 
-MANAGER_IP = "http://192.227.159.2:8000"
+MANAGER_IP = "http://192.227.159.13:8000"
 NUM_IPS_TO_QUERY = 5
 
 USER_AGENT_LIST = [
@@ -99,9 +99,17 @@ async def get_ip_and_cookie():
 
 
 async def get_subreddit_word():
-    async with aiohttp.ClientSession() as session:
-        async with session.get(f'{MANAGER_IP}/get_subreddit_word') as response:
-            return await response.json()
+    retries = 5
+    for attempt in range(retries):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{MANAGER_IP}/get_word') as response:
+                    response.raise_for_status()
+                    return await response.json()
+        except aiohttp.ClientError as e:
+            logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch subreddit word: {e}")
+            await asyncio.sleep(2 ** attempt)
+    raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
 
 async def get_new_ip_and_update_session(session, tcp_connector):
     new_ip_cookie = await get_ip_and_cookie()
@@ -257,7 +265,7 @@ def extract_subreddit_name(input_string):
 
 async def generate_url(ip: str) -> str:
     for _ in range(3):  # Try up to 3 times to get a valid URL
-        word_response = await fetch_with_retry(ip, "http://localhost:8000/get_word")
+        word_response = await get_subreddit_word()
         selected_subreddit_ = "https://reddit.com/r/" + word_response['word']
         url = selected_subreddit_
 
