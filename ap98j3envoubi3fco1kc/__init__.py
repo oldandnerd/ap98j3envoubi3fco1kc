@@ -125,6 +125,7 @@ async def get_new_ip_and_update_session():
     return session, proxy_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
 
 
+
 async def handle_rate_limit(response, session, tcp_connector):
     if response.status == 429:
         logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
@@ -132,6 +133,7 @@ async def handle_rate_limit(response, session, tcp_connector):
         await session.close()  # Close the old session after getting a new one
         return new_session, new_tcp_connector, new_ip
     return session, tcp_connector, None
+
 
 
 
@@ -156,6 +158,7 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
             logging.warning(f"[Reddit] ({ip}) Request failed: {e}. Retrying... [{attempt + 1}/{retries}]")
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     raise aiohttp.ClientError(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
+
 
 
 async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
@@ -372,6 +375,7 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
 
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] ({ip}) Failed to fetch {url_to_fetch}: {e}")
+
 
 def correct_reddit_url(url):
     parts = url.split("https://reddit.comhttps://", 1)
