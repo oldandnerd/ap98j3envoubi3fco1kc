@@ -106,10 +106,11 @@ async def create_session_with_proxy(ip, port, cookies):
     jar = CookieJar()
     for cookie in cookies:
         jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
-    session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
-    session._connector = tcp_connector
-    logging.info(f"Created session with proxy {ip}:{port}")
-    return session, tcp_connector, f"{ip}:{port}"
+    async with ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False) as session:
+        session._connector = tcp_connector
+        logging.info(f"Created session with proxy {ip}:{port}")
+        return session, tcp_connector, f"{ip}:{port}"
+
 
 async def ensure_session(session, tcp_connector):
     if session.closed:
@@ -123,6 +124,25 @@ async def ensure_session(session, tcp_connector):
         session._connector = tcp_connector
         logging.info(f"Recreated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
     return session, tcp_connector
+
+async def get_new_ip_and_update_session(session, tcp_connector):
+    new_ip_cookie = await get_ip_and_cookie()
+    proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
+    jar = CookieJar()
+    for cookie in new_ip_cookie['cookies']:
+        jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
+
+    # Close the old session and connector
+    await close_session_and_connector(session, tcp_connector)
+
+    # Create a new session
+    async with ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False) as new_session:
+        new_tcp_connector = TCPConnector(family=socket.AF_INET)
+        new_session._connector = new_tcp_connector
+
+        logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
+        return new_session, new_tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
+
 
 async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, backoff_factor=0.3):
     for attempt in range(retries):
@@ -149,23 +169,7 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
     logging.error(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
     return None
 
-async def get_new_ip_and_update_session(session, tcp_connector):
-    new_ip_cookie = await get_ip_and_cookie()
-    proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
-    jar = CookieJar()
-    for cookie in new_ip_cookie['cookies']:
-        jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
 
-    # Close the old session and connector
-    await close_session_and_connector(session, tcp_connector)
-
-    # Create a new session
-    new_session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
-    new_tcp_connector = TCPConnector(family=socket.AF_INET)
-    new_session._connector = new_tcp_connector
-
-    logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
-    return new_session, new_tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
 
 async def close_session_and_connector(session, tcp_connector):
     if not session.closed:
@@ -312,6 +316,14 @@ def split_strings_subreddit_name(input_string):
 
     words.append(input_string[start:])
     return ' '.join(words)
+
+async def handle_rate_limit(response, session, tcp_connector):
+    if response.status == 429:
+        logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
+        new_session, new_tcp_connector, new_ip = await get_new_ip_and_update_session(session, tcp_connector)
+        return new_session, new_tcp_connector, new_ip
+    return session, tcp_connector, None
+
 
 async def scrap_subreddit_new_layout(session: ClientSession, ip: str, subreddit_url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
