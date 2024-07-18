@@ -271,15 +271,11 @@ def extract_subreddit_name(input_string):
 async def generate_url(ip: str) -> str:
     for _ in range(3):  # Try up to 3 times to get a valid URL
         word_response = await get_subreddit_word()
-        # Correcting the URL format
-        selected_subreddit_ = "https://reddit.com/r/" + word_response['word']
-        url = selected_subreddit_
-
-        if url:
-            logging.info(f"[Reddit] ({ip}) Generated subreddit URL: {url}")
-            return url
-        else:
-            logging.warning(f"[Reddit] ({ip}) Failed to generate URL. Retrying...")
+        # Ensure no extra "r/" in the URL
+        subreddit_name = word_response['word'].lstrip('r/')
+        selected_subreddit_url = f"https://reddit.com/r/{subreddit_name}"
+        logging.info(f"[Reddit] ({ip}) Generated subreddit URL: {selected_subreddit_url}")
+        return selected_subreddit_url
     raise ValueError(f"[Reddit] ({ip}) Failed to generate a valid URL after multiple attempts")
 
 def split_strings_subreddit_name(input_string):
@@ -333,10 +329,9 @@ def find_permalinks(data):
 async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
-    url_to_fetch = subreddit_url
+    url_to_fetch = subreddit_url.rstrip('/') + "/.json"
     if random.random() < 0.75:
-        url_to_fetch = url_to_fetch + "/new"
-    url_to_fetch = url_to_fetch + "/.json"
+        url_to_fetch = subreddit_url.rstrip('/') + "/new/.json"
 
     if url_to_fetch.endswith("/new/new/.json"):
         url_to_fetch = url_to_fetch.replace("/new/new/.json", "/new.json")
@@ -369,7 +364,9 @@ def correct_reddit_url(url):
     if len(parts) == 2:
         corrected_url = "https://" + parts[1]
         return corrected_url
-    return url
+    # Remove extra "r/" from URLs if present
+    corrected_url = re.sub(r'(/r/){2,}', '/r/', url)
+    return corrected_url
 
 def post_process_item(item):
     try:
