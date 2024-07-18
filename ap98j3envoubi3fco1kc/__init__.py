@@ -70,6 +70,12 @@ async def ensure_session(session, tcp_connector):
         logging.info(f"Recreated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
     return session, tcp_connector
 
+async def close_session_and_connector(session, tcp_connector):
+    if not session.closed:
+        await session.close()
+    if tcp_connector is not None and not tcp_connector.closed:
+        tcp_connector.close()
+
 
 def read_parameters(parameters):
     if parameters and isinstance(parameters, dict):
@@ -182,8 +188,8 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
         except aiohttp.ClientError as e:
             logging.warning(f"[Reddit] ({ip}) Request failed: {e}. Retrying... [{attempt + 1}/{retries}]")
         await asyncio.sleep(backoff_factor * (2 ** attempt))
-    raise aiohttp.ClientError(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
-
+    logging.error(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
+    return None
 
 
 
@@ -479,9 +485,9 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
                 yielded_items += 1
     finally:
         for session, tcp_connector, _ in sessions:
-            await session.close()
-            await tcp_connector.close()
+            await close_session_and_connector(session, tcp_connector)
             await asyncio.sleep(0.1)
+
 
 
 async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, tcp_connector):
