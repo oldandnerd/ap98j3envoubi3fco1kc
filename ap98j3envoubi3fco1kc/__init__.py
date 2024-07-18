@@ -57,18 +57,7 @@ DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
 
 
-async def ensure_session(session, tcp_connector):
-    if session.closed:
-        new_ip_cookie = await get_ip_and_cookie()
-        proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
-        jar = CookieJar()
-        for cookie in new_ip_cookie['cookies']:
-            jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
-        session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
-        tcp_connector = TCPConnector(family=socket.AF_INET)
-        session._connector = tcp_connector
-        logging.info(f"Recreated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
-    return session, tcp_connector
+
 
 async def close_session_and_connector(session, tcp_connector):
     if not session.closed:
@@ -118,6 +107,21 @@ async def get_ip_and_cookie():
             logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch IP and cookie: {e}")
             await asyncio.sleep(2 ** attempt)
     raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
+
+
+
+async def ensure_session(session, tcp_connector):
+    if session.closed:
+        new_ip_cookie = await get_ip_and_cookie()
+        proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
+        jar = CookieJar()
+        for cookie in new_ip_cookie['cookies']:
+            jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
+        session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
+        tcp_connector = TCPConnector(family=socket.AF_INET)
+        session._connector = tcp_connector
+        logging.info(f"Recreated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
+    return session, tcp_connector
 
 async def get_subreddit_url():
     retries = 5
@@ -190,6 +194,7 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     logging.error(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
     return None
+
 
 
 
