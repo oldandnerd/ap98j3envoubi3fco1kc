@@ -158,7 +158,6 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
     raise aiohttp.ClientError(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
 
 
-
 async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
@@ -266,6 +265,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] ({ip}) Failed to fetch {_url}: {e}")
 
+
 def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
     current_timestamp = int(time.time())  # Get the current UNIX timestamp
     return (current_timestamp - int(input_timestamp)) <= timeframe_sec
@@ -337,6 +337,7 @@ def find_permalinks(data):
 async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
+    
     url_to_fetch = subreddit_url.rstrip('/') + "/.json"
     if random.random() < 0.75:
         url_to_fetch = subreddit_url.rstrip('/') + "/new/.json"
@@ -346,26 +347,31 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
 
     logging.info(f"[Reddit] ({ip}) [JSON MODE] opening: {url_to_fetch}")
     await asyncio.sleep(1)
-    response_json = await fetch_with_retry(session, url_to_fetch, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, ip=ip, tcp_connector=tcp_connector)
-    if not response_json:
-        return
+    
+    try:
+        response_json = await fetch_with_retry(session, url_to_fetch, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, ip=ip, tcp_connector=tcp_connector)
+        if not response_json:
+            return
 
-    permalinks = list(find_permalinks(response_json))
+        permalinks = list(find_permalinks(response_json))
 
-    for permalink in permalinks:
-        if count >= limit:
-            break
-        try:
-            if random.random() < SKIP_POST_PROBABILITY:
-                url = permalink
-                if "https" not in url:
-                    url = f"https://reddit.com{url}"
-                async for item in scrap_post(session, ip, url, count, limit, tcp_connector):
-                    if count < limit:
-                        yield item
-                        count += 1
-        except Exception as e:
-            logging.exception(f"[Reddit] ({ip}) [JSON MODE] Error detected: {e}")
+        for permalink in permalinks:
+            if count >= limit:
+                break
+            try:
+                if random.random() < SKIP_POST_PROBABILITY:
+                    url = permalink
+                    if "https" not in url:
+                        url = f"https://reddit.com{url}"
+                    async for item in scrap_post(session, ip, url, count, limit, tcp_connector):
+                        if count < limit:
+                            yield item
+                            count += 1
+            except Exception as e:
+                logging.exception(f"[Reddit] ({ip}) [JSON MODE] Error detected: {e}")
+
+    except aiohttp.ClientError as e:
+        logging.error(f"[Reddit] ({ip}) Failed to fetch {url_to_fetch}: {e}")
 
 def correct_reddit_url(url):
     parts = url.split("https://reddit.comhttps://", 1)
