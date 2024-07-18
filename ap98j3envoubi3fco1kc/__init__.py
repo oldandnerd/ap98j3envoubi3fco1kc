@@ -37,7 +37,7 @@ tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
 logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.13:8000"
-NUM_IPS_TO_QUERY = 5
+NUM_IPS_TO_QUERY = 10
 
 USER_AGENT_LIST = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
@@ -98,16 +98,16 @@ async def get_ip_and_cookie():
             await asyncio.sleep(2 ** attempt)
     raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
 
-async def get_subreddit_word():
+async def get_subreddit_url():
     retries = 5
     for attempt in range(retries):
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'{MANAGER_IP}/get_word') as response:
+                async with session.get(f'{MANAGER_IP}/get_url') as response:
                     response.raise_for_status()
                     return await response.json()
         except aiohttp.ClientError as e:
-            logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch subreddit word: {e}")
+            logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch subreddit URL: {e}")
             await asyncio.sleep(2 ** attempt)
     raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
 
@@ -268,15 +268,13 @@ def extract_subreddit_name(input_string):
     match = re.search(r'r/([^/]+)', input_string)
     return match.group(1) if match else None
 
-async def generate_url(ip: str) -> str:
+async def get_subreddit_url_from_manager(ip: str) -> str:
     for _ in range(3):  # Try up to 3 times to get a valid URL
-        word_response = await get_subreddit_word()
-        # Ensure no extra "r/" in the URL
-        subreddit_name = word_response['word'].lstrip('r/')
-        selected_subreddit_url = f"https://reddit.com/r/{subreddit_name}"
-        logging.info(f"[Reddit] ({ip}) Generated subreddit URL: {selected_subreddit_url}")
+        url_response = await get_subreddit_url()
+        selected_subreddit_url = url_response['url']
+        logging.info(f"[Reddit] ({ip}) Retrieved subreddit URL: {selected_subreddit_url}")
         return selected_subreddit_url
-    raise ValueError(f"[Reddit] ({ip}) Failed to generate a valid URL after multiple attempts")
+    raise ValueError(f"[Reddit] ({ip}) Failed to retrieve a valid URL after multiple attempts")
 
 def split_strings_subreddit_name(input_string):
     words = []
@@ -432,7 +430,7 @@ async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO
     count = 0
     for i in range(nb_subreddit_attempts):
         await asyncio.sleep(random.uniform(1, i))
-        url = await generate_url(ip)
+        url = await get_subreddit_url_from_manager(ip)
         if not url:
             continue
         if url.endswith("/new/new/.json"):
