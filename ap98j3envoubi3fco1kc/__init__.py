@@ -5,7 +5,7 @@ from aiohttp_socks import ProxyConnector
 from aiohttp import ClientSession, CookieJar, TCPConnector
 from yarl import URL
 import asyncio
-from typing import AsyncGenerator, List, Dict, Tuple
+from typing import AsyncGenerator
 import time
 from datetime import datetime as datett
 from datetime import timezone
@@ -26,7 +26,6 @@ from exorde_data import (
 from wordsegment import load, segment
 from tokenizers import Tokenizer, models, pre_tokenizers
 from aiohttp.client_exceptions import ClientConnectorError
-from cachetools import TTLCache
 
 # Load word segmentation library
 load()
@@ -39,7 +38,6 @@ logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.3:8000"
 NUM_IPS_TO_QUERY = 10
-CACHE_TTL = 300  # Time-to-live for subreddit URL cache
 
 USER_AGENT_LIST = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
@@ -58,8 +56,6 @@ DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3
 DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
 
-# Cache to store subreddit URLs temporarily
-subreddit_url_cache = TTLCache(maxsize=100, ttl=CACHE_TTL)
 
 async def ensure_session(session, tcp_connector):
     if session.closed:
@@ -79,6 +75,7 @@ async def close_session_and_connector(session, tcp_connector):
         await session.close()
     if tcp_connector is not None and not tcp_connector.closed:
         tcp_connector.close()
+
 
 def read_parameters(parameters):
     if parameters and isinstance(parameters, dict):
@@ -154,12 +151,20 @@ async def get_new_ip_and_update_session(session, tcp_connector):
     logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
     return new_session, new_tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
 
+
+
+
+
 async def handle_rate_limit(response, session, tcp_connector):
     if response.status == 429:
         logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
         new_session, new_tcp_connector, new_ip = await get_new_ip_and_update_session(session, tcp_connector)
         return new_session, new_tcp_connector, new_ip
     return session, tcp_connector, None
+
+
+
+
 
 async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, backoff_factor=0.3):
     for attempt in range(retries):
@@ -185,6 +190,8 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     logging.error(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
     return None
+
+
 
 async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
@@ -261,7 +268,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
                     count += 1
 
     resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
-    _url = url + "/json"
+    _url = url + ".json"
     logging.info(f"[Reddit] ({ip}) Scraping - getting {_url}")
 
     try:
@@ -294,6 +301,9 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] ({ip}) Failed to fetch {_url}: {e}")
 
+
+
+
 def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
     current_timestamp = int(time.time())  # Get the current UNIX timestamp
     return (current_timestamp - int(input_timestamp)) <= timeframe_sec
@@ -307,13 +317,12 @@ def extract_subreddit_name(input_string):
     return match.group(1) if match else None
 
 async def get_subreddit_url_from_manager(ip: str) -> str:
-    if ip in subreddit_url_cache:
-        return subreddit_url_cache[ip]
-    url_response = await get_subreddit_url()
-    selected_subreddit_url = url_response['url']
-    logging.info(f"[Reddit] ({ip}) Retrieved subreddit URL: {selected_subreddit_url}")
-    subreddit_url_cache[ip] = selected_subreddit_url
-    return selected_subreddit_url
+    for _ in range(3):  # Try up to 3 times to get a valid URL
+        url_response = await get_subreddit_url()
+        selected_subreddit_url = url_response['url']
+        logging.info(f"[Reddit] ({ip}) Retrieved subreddit URL: {selected_subreddit_url}")
+        return selected_subreddit_url
+    raise ValueError(f"[Reddit] ({ip}) Failed to retrieve a valid URL after multiple attempts")
 
 def split_strings_subreddit_name(input_string):
     words = []
@@ -356,6 +365,8 @@ async def scrap_subreddit_new_layout(session: ClientSession, ip: str, subreddit_
             except Exception as e:
                 logging.exception(f"[Reddit] ({ip}) Error scraping post {url}: {e}")
 
+
+
 def find_permalinks(data):
     if isinstance(data, dict):
         if 'permalink' in data:
@@ -370,12 +381,12 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
     if count >= limit:
         return
 
-    url_to_fetch = subreddit_url.rstrip('/') + "/json"
+    url_to_fetch = subreddit_url.rstrip('/') + "/.json"
     if random.random() < 0.75:
-        url_to_fetch = subreddit_url.rstrip('/') + "/new/json"
+        url_to_fetch = subreddit_url.rstrip('/') + "/new/.json"
 
-    if url_to_fetch.endswith("/new/new/json"):
-        url_to_fetch = url_to_fetch.replace("/new/new/json", "/new/json")
+    if url_to_fetch.endswith("/new/new/.json"):
+        url_to_fetch = url_to_fetch.replace("/new/new/.json", "/new.json")
 
     logging.info(f"[Reddit] ({ip}) [JSON MODE] opening: {url_to_fetch}")
     await asyncio.sleep(1)
@@ -405,6 +416,10 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
 
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] ({ip}) Failed to fetch {url_to_fetch}: {e}")
+
+
+
+
 
 def correct_reddit_url(url):
     parts = url.split("https://reddit.comhttps://", 1)
@@ -473,6 +488,8 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
             await close_session_and_connector(session, tcp_connector)
             await asyncio.sleep(0.1)
 
+
+
 async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, tcp_connector):
     items = []
     count = 0
@@ -481,8 +498,8 @@ async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO
         url = await get_subreddit_url_from_manager(ip)
         if not url:
             continue
-        if url.endswith("/new/new/json"):
-            url = url.replace("/new/new/json", "/new/json")
+        if url.endswith("/new/new/.json"):
+            url = url.replace("/new/new/.json", "/new.json")
         logging.info(f"[Reddit] ({ip}) Attempt {(i+1)}/{nb_subreddit_attempts} Scraping {url} with max oldness of {max_oldness_seconds}")
         if "reddit.com" not in url:
             raise ValueError(f"Not a Reddit URL {url}")
