@@ -328,6 +328,7 @@ def split_strings_subreddit_name(input_string):
 async def scrap_subreddit_new_layout(session: ClientSession, ip: str, subreddit_url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
+    session, tcp_connector = await ensure_session(session, tcp_connector)
     async with session.get(subreddit_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
         session, tcp_connector = await ensure_session(session, tcp_connector)
         session, tcp_connector, _ = await handle_rate_limit(response, session, tcp_connector)
