@@ -111,36 +111,39 @@ async def get_subreddit_url():
             await asyncio.sleep(2 ** attempt)
     raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
 
-async def get_new_ip_and_update_session(session, tcp_connector):
+async def get_new_ip_and_update_session():
     new_ip_cookie = await get_ip_and_cookie()
     proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
     jar = CookieJar()
     for cookie in new_ip_cookie['cookies']:
         jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
     
-    # Close the old session
-    await session.close()
-    
     # Create a new session
     session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
-    session._connector = tcp_connector
     
     logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
-    return session, tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
+    return session, proxy_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
+
 
 async def handle_rate_limit(response, session, tcp_connector):
     if response.status == 429:
         logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
-        session, tcp_connector, _ = await get_new_ip_and_update_session(session, tcp_connector)
-        return True
-    return False
+        new_session, new_tcp_connector, new_ip = await get_new_ip_and_update_session()
+        await session.close()  # Close the old session after getting a new one
+        return new_session, new_tcp_connector, new_ip
+    return session, tcp_connector, None
+
 
 
 async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, backoff_factor=0.3):
     for attempt in range(retries):
         try:
             async with session.get(url, headers=headers, timeout=BASE_TIMEOUT) as response:
-                if await handle_rate_limit(response, session, tcp_connector):
+                new_session, new_tcp_connector, new_ip = await handle_rate_limit(response, session, tcp_connector)
+                if new_session != session:
+                    session = new_session
+                    tcp_connector = new_tcp_connector
+                    ip = new_ip
                     continue
                 if response.status == 404:
                     logging.error(f"[Reddit] ({ip}) 404 Not Found for URL: {url}")
@@ -153,6 +156,7 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
             logging.warning(f"[Reddit] ({ip}) Request failed: {e}. Retrying... [{attempt + 1}/{retries}]")
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     raise aiohttp.ClientError(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
+
 
 
 async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
