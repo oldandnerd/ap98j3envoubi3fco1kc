@@ -106,10 +106,11 @@ async def create_session_with_proxy(ip, port, cookies):
     jar = CookieJar()
     for cookie in cookies:
         jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
-    async with ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False) as session:
-        session._connector = tcp_connector
-        logging.info(f"Created session with proxy {ip}:{port}")
-        return session, tcp_connector, f"{ip}:{port}"
+    session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
+    session._connector = tcp_connector
+    logging.info(f"Created session with proxy {ip}:{port}")
+    return session, tcp_connector, f"{ip}:{port}"
+
 
 
 async def ensure_session(session, tcp_connector):
@@ -136,12 +137,13 @@ async def get_new_ip_and_update_session(session, tcp_connector):
     await close_session_and_connector(session, tcp_connector)
 
     # Create a new session
-    async with ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False) as new_session:
-        new_tcp_connector = TCPConnector(family=socket.AF_INET)
-        new_session._connector = new_tcp_connector
+    new_session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
+    new_tcp_connector = TCPConnector(family=socket.AF_INET)
+    new_session._connector = new_tcp_connector
 
-        logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
-        return new_session, new_tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
+    logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
+    return new_session, new_tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
+
 
 
 async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, backoff_factor=0.3):
@@ -171,11 +173,13 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
 
 
 
+
 async def close_session_and_connector(session, tcp_connector):
     if not session.closed:
         await session.close()
     if tcp_connector is not None and not tcp_connector.closed:
         tcp_connector.close()
+
 
 async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
@@ -285,6 +289,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] ({ip}) Failed to fetch {_url}: {e}")
 
+
 def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
     current_timestamp = int(time.time())  # Get the current UNIX timestamp
     return (current_timestamp - int(input_timestamp)) <= timeframe_sec
@@ -323,6 +328,7 @@ async def handle_rate_limit(response, session, tcp_connector):
         new_session, new_tcp_connector, new_ip = await get_new_ip_and_update_session(session, tcp_connector)
         return new_session, new_tcp_connector, new_ip
     return session, tcp_connector, None
+
 
 
 async def scrap_subreddit_new_layout(session: ClientSession, ip: str, subreddit_url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
