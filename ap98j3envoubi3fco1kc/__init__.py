@@ -113,23 +113,28 @@ async def get_subreddit_url():
 
 async def get_new_ip_and_update_session(session, tcp_connector):
     new_ip_cookie = await get_ip_and_cookie()
-    new_proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
+    proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
     jar = CookieJar()
     for cookie in new_ip_cookie['cookies']:
         jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
-    session._connector = new_proxy_connector
-    session.cookie_jar = jar
-    session._connector_owner = False
-    session._tcp_connector = tcp_connector
+    
+    # Close the old session
+    await session.close()
+    
+    # Create a new session
+    session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
+    session._connector = tcp_connector
+    
     logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
     return session, tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
 
 async def handle_rate_limit(response, session, tcp_connector):
     if response.status == 429:
         logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
-        await get_new_ip_and_update_session(session, tcp_connector)
+        session, tcp_connector, _ = await get_new_ip_and_update_session(session, tcp_connector)
         return True
     return False
+
 
 async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, backoff_factor=0.3):
     for attempt in range(retries):
@@ -148,6 +153,7 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
             logging.warning(f"[Reddit] ({ip}) Request failed: {e}. Retrying... [{attempt + 1}/{retries}]")
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     raise aiohttp.ClientError(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
+
 
 async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
