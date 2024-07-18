@@ -5,7 +5,7 @@ from aiohttp_socks import ProxyConnector
 from aiohttp import ClientSession, CookieJar, TCPConnector
 from yarl import URL
 import asyncio
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, List, Dict, Tuple
 import time
 from datetime import datetime as datett
 from datetime import timezone
@@ -75,7 +75,6 @@ async def close_session_and_connector(session, tcp_connector):
         await session.close()
     if tcp_connector is not None and not tcp_connector.closed:
         tcp_connector.close()
-
 
 def read_parameters(parameters):
     if parameters and isinstance(parameters, dict):
