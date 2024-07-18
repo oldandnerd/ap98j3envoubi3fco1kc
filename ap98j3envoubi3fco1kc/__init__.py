@@ -38,7 +38,7 @@ tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
 logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.3:8000"
-NUM_IPS_TO_QUERY = 5
+NUM_IPS_TO_QUERY = 10
 CACHE_TTL = 300  # Time-to-live for subreddit URL cache
 
 USER_AGENT_LIST = [
@@ -261,7 +261,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
                     count += 1
 
     resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
-    _url = url + ".json"
+    _url = url + "/json"
     logging.info(f"[Reddit] ({ip}) Scraping - getting {_url}")
 
     try:
@@ -370,12 +370,12 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
     if count >= limit:
         return
 
-    url_to_fetch = subreddit_url.rstrip('/') + "/.json"
+    url_to_fetch = subreddit_url.rstrip('/') + "/json"
     if random.random() < 0.75:
-        url_to_fetch = subreddit_url.rstrip('/') + "/new/.json"
+        url_to_fetch = subreddit_url.rstrip('/') + "/new/json"
 
-    if url_to_fetch.endswith("/new/new/.json"):
-        url_to_fetch = url_to_fetch.replace("/new/new/.json", "/new.json")
+    if url_to_fetch.endswith("/new/new/json"):
+        url_to_fetch = url_to_fetch.replace("/new/new/json", "/new/json")
 
     logging.info(f"[Reddit] ({ip}) [JSON MODE] opening: {url_to_fetch}")
     await asyncio.sleep(1)
@@ -481,8 +481,8 @@ async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO
         url = await get_subreddit_url_from_manager(ip)
         if not url:
             continue
-        if url.endswith("/new/new/.json"):
-            url = url.replace("/new/new/.json", "/new.json")
+        if url.endswith("/new/new/json"):
+            url = url.replace("/new/new/json", "/new/json")
         logging.info(f"[Reddit] ({ip}) Attempt {(i+1)}/{nb_subreddit_attempts} Scraping {url} with max oldness of {max_oldness_seconds}")
         if "reddit.com" not in url:
             raise ValueError(f"Not a Reddit URL {url}")
