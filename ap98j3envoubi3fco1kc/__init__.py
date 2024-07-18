@@ -144,8 +144,7 @@ async def get_new_ip_and_update_session(session, tcp_connector):
         jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
 
     # Close the old session and connector
-    await session.close()
-    await tcp_connector.close()
+    await close_session_and_connector(session, tcp_connector)
 
     # Create a new session
     new_session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
@@ -491,7 +490,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     finally:
         for session, tcp_connector, _ in sessions:
             await close_session_and_connector(session, tcp_connector)
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)
 
 
 
