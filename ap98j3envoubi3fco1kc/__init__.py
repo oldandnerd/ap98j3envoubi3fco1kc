@@ -38,7 +38,7 @@ tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
 logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.3:8000"
-NUM_IPS_TO_QUERY = 10
+NUM_IPS_TO_QUERY = 5
 CACHE_TTL = 300  # Time-to-live for subreddit URL cache
 
 USER_AGENT_LIST = [
