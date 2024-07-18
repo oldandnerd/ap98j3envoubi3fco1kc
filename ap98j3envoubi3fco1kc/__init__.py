@@ -165,10 +165,16 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
         try:
             session, tcp_connector = await ensure_session(session, tcp_connector)
             async with session.get(url, headers=headers, timeout=BASE_TIMEOUT) as response:
-                session, tcp_connector, _ = await handle_rate_limit(response, session, tcp_connector)
                 if response.status == 404:
                     logging.error(f"[Reddit] ({ip}) 404 Not Found for URL: {url}")
                     return None
+                if response.status == 403:
+                    logging.warning(f"[Reddit] ({ip}) 403 Forbidden for URL: {url}. Not retrying.")
+                    return None
+                if response.status == 429:
+                    logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Requesting new IP.")
+                    session, tcp_connector, ip = await get_new_ip_and_update_session(session, tcp_connector)
+                    continue  # Retry immediately with the new IP
                 response.raise_for_status()
                 return await response.json()
         except ClientConnectorError as e:
@@ -177,7 +183,6 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
             logging.warning(f"[Reddit] ({ip}) Request failed: {e}. Retrying... [{attempt + 1}/{retries}]")
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     raise aiohttp.ClientError(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
-
 
 
 
