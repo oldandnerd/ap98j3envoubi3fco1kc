@@ -111,13 +111,17 @@ async def get_subreddit_url():
             await asyncio.sleep(2 ** attempt)
     raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
 
-async def get_new_ip_and_update_session():
+async def get_new_ip_and_update_session(session, tcp_connector):
     new_ip_cookie = await get_ip_and_cookie()
     proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
     jar = CookieJar()
     for cookie in new_ip_cookie['cookies']:
         jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
-    
+
+    # Close the old session and connector
+    await session.close()
+    await tcp_connector.close()
+
     # Create a new session
     session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
     
@@ -272,6 +276,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
 
 
 
+
 def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
     current_timestamp = int(time.time())  # Get the current UNIX timestamp
     return (current_timestamp - int(input_timestamp)) <= timeframe_sec
@@ -378,6 +383,7 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
 
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] ({ip}) Failed to fetch {url_to_fetch}: {e}")
+
 
 
 
