@@ -85,9 +85,18 @@ async def create_session_with_proxy(ip, port, cookies):
     return session, tcp_connector, f"{ip}:{port}"
 
 async def get_ip_and_cookie():
-    async with aiohttp.ClientSession() as session:
-        async with session.get(f'{MANAGER_IP}/get_ip_and_cookie') as response:
-            return await response.json()
+    retries = 5
+    for attempt in range(retries):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{MANAGER_IP}/get_ip_and_cookie') as response:
+                    response.raise_for_status()
+                    return await response.json()
+        except aiohttp.ClientError as e:
+            logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch IP and cookie: {e}")
+            await asyncio.sleep(2 ** attempt)
+    raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
+
 
 async def get_subreddit_word():
     async with aiohttp.ClientSession() as session:
@@ -114,7 +123,7 @@ async def handle_rate_limit(response, session, tcp_connector):
         return True
     return False
 
-async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=3, backoff_factor=0.3):
+async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, backoff_factor=0.3):
     for attempt in range(retries):
         try:
             async with session.get(url, headers=headers, timeout=BASE_TIMEOUT) as response:
@@ -123,9 +132,10 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=3, 
                 response.raise_for_status()
                 return await response.json()
         except aiohttp.ClientError as e:
-            logging.warning(f"[Reddit] ({ip}) Request failed: {e}. Retrying...")
+            logging.warning(f"[Reddit] ({ip}) Request failed: {e}. Retrying... [{attempt + 1}/{retries}]")
             await asyncio.sleep(backoff_factor * (2 ** attempt))
-    raise aiohttp.ClientError(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts.")
+    raise aiohttp.ClientError(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
+
 
 async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
@@ -409,6 +419,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
             await session.close()
             await tcp_connector.close()
             await asyncio.sleep(0.1)
+
 
 async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, tcp_connector):
     items = []
