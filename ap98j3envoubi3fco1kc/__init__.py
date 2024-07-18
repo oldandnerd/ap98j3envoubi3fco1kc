@@ -56,6 +56,27 @@ DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3
 DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
 
+
+async def ensure_session(session, tcp_connector):
+    if session.closed:
+        new_ip_cookie = await get_ip_and_cookie()
+        proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
+        jar = CookieJar()
+        for cookie in new_ip_cookie['cookies']:
+            jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
+        session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
+        tcp_connector = TCPConnector(family=socket.AF_INET)
+        session._connector = tcp_connector
+        logging.info(f"Recreated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
+    return session, tcp_connector
+
+async def close_session_and_connector(session, tcp_connector):
+    if not session.closed:
+        await session.close()
+    if tcp_connector is not None and not tcp_connector.closed:
+        tcp_connector.close()
+
+
 def read_parameters(parameters):
     if parameters and isinstance(parameters, dict):
         max_oldness_seconds = parameters.get("max_oldness_seconds", DEFAULT_OLDNESS_SECONDS)
@@ -73,6 +94,17 @@ def read_parameters(parameters):
         skip_post_probability = DEFAULT_SKIP_PROBA
 
     return max_oldness_seconds, maximum_items_to_collect, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, skip_post_probability
+
+async def create_session_with_proxy(ip, port, cookies):
+    tcp_connector = TCPConnector(family=socket.AF_INET)  # Force IPv4
+    proxy_connector = ProxyConnector.from_url(f"socks5://{ip}:{port}", rdns=True)
+    jar = CookieJar()
+    for cookie in cookies:
+        jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
+    session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
+    session._connector = tcp_connector
+    logging.info(f"Created session with proxy {ip}:{port}")
+    return session, tcp_connector, f"{ip}:{port}"
 
 async def get_ip_and_cookie():
     retries = 5
@@ -100,32 +132,6 @@ async def get_subreddit_url():
             await asyncio.sleep(2 ** attempt)
     raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
 
-async def create_session_with_proxy(ip, port, cookies):
-    tcp_connector = TCPConnector(family=socket.AF_INET)  # Force IPv4
-    proxy_connector = ProxyConnector.from_url(f"socks5://{ip}:{port}", rdns=True)
-    jar = CookieJar()
-    for cookie in cookies:
-        jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
-    session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
-    session._connector = tcp_connector
-    logging.info(f"Created session with proxy {ip}:{port}")
-    return session, tcp_connector, f"{ip}:{port}"
-
-
-
-async def ensure_session(session, tcp_connector):
-    if session.closed:
-        new_ip_cookie = await get_ip_and_cookie()
-        proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
-        jar = CookieJar()
-        for cookie in new_ip_cookie['cookies']:
-            jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
-        session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
-        tcp_connector = TCPConnector(family=socket.AF_INET)
-        session._connector = tcp_connector
-        logging.info(f"Recreated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
-    return session, tcp_connector
-
 async def get_new_ip_and_update_session(session, tcp_connector):
     new_ip_cookie = await get_ip_and_cookie()
     proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
@@ -134,7 +140,8 @@ async def get_new_ip_and_update_session(session, tcp_connector):
         jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
 
     # Close the old session and connector
-    await close_session_and_connector(session, tcp_connector)
+    await session.close()
+    await tcp_connector.close()
 
     # Create a new session
     new_session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
@@ -143,6 +150,19 @@ async def get_new_ip_and_update_session(session, tcp_connector):
 
     logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
     return new_session, new_tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
+
+
+
+
+
+async def handle_rate_limit(response, session, tcp_connector):
+    if response.status == 429:
+        logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
+        new_session, new_tcp_connector, new_ip = await get_new_ip_and_update_session(session, tcp_connector)
+        return new_session, new_tcp_connector, new_ip
+    return session, tcp_connector, None
+
+
 
 
 
@@ -171,14 +191,6 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
     logging.error(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
     return None
 
-
-
-
-async def close_session_and_connector(session, tcp_connector):
-    if not session.closed:
-        await session.close()
-    if tcp_connector is not None and not tcp_connector.closed:
-        tcp_connector.close()
 
 
 async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
@@ -290,6 +302,8 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
         logging.error(f"[Reddit] ({ip}) Failed to fetch {_url}: {e}")
 
 
+
+
 def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
     current_timestamp = int(time.time())  # Get the current UNIX timestamp
     return (current_timestamp - int(input_timestamp)) <= timeframe_sec
@@ -322,18 +336,10 @@ def split_strings_subreddit_name(input_string):
     words.append(input_string[start:])
     return ' '.join(words)
 
-async def handle_rate_limit(response, session, tcp_connector):
-    if response.status == 429:
-        logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
-        new_session, new_tcp_connector, new_ip = await get_new_ip_and_update_session(session, tcp_connector)
-        return new_session, new_tcp_connector, new_ip
-    return session, tcp_connector, None
-
-
-
 async def scrap_subreddit_new_layout(session: ClientSession, ip: str, subreddit_url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
+    session, tcp_connector = await ensure_session(session, tcp_connector)
     async with session.get(subreddit_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
         session, tcp_connector = await ensure_session(session, tcp_connector)
         session, tcp_connector, _ = await handle_rate_limit(response, session, tcp_connector)
@@ -358,6 +364,8 @@ async def scrap_subreddit_new_layout(session: ClientSession, ip: str, subreddit_
                         count += 1
             except Exception as e:
                 logging.exception(f"[Reddit] ({ip}) Error scraping post {url}: {e}")
+
+
 
 def find_permalinks(data):
     if isinstance(data, dict):
@@ -384,6 +392,7 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
     await asyncio.sleep(1)
 
     try:
+        session, tcp_connector = await ensure_session(session, tcp_connector)
         response_json = await fetch_with_retry(session, url_to_fetch, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, ip=ip, tcp_connector=tcp_connector)
         if not response_json:
             return
@@ -407,6 +416,10 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
 
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] ({ip}) Failed to fetch {url_to_fetch}: {e}")
+
+
+
+
 
 def correct_reddit_url(url):
     parts = url.split("https://reddit.comhttps://", 1)
@@ -474,6 +487,8 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
         for session, tcp_connector, _ in sessions:
             await close_session_and_connector(session, tcp_connector)
             await asyncio.sleep(0.1)
+
+
 
 async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, tcp_connector):
     items = []
