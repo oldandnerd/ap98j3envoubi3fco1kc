@@ -111,9 +111,23 @@ async def create_session_with_proxy(ip, port, cookies):
     logging.info(f"Created session with proxy {ip}:{port}")
     return session, tcp_connector, f"{ip}:{port}"
 
+async def ensure_session(session, tcp_connector):
+    if session.closed:
+        new_ip_cookie = await get_ip_and_cookie()
+        proxy_connector = ProxyConnector.from_url(f"socks5://{new_ip_cookie['ip']}:{new_ip_cookie['port']}", rdns=True)
+        jar = CookieJar()
+        for cookie in new_ip_cookie['cookies']:
+            jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
+        session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
+        tcp_connector = TCPConnector(family=socket.AF_INET)
+        session._connector = tcp_connector
+        logging.info(f"Recreated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
+    return session, tcp_connector
+
 async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, backoff_factor=0.3):
     for attempt in range(retries):
         try:
+            session, tcp_connector = await ensure_session(session, tcp_connector)
             async with session.get(url, headers=headers, timeout=BASE_TIMEOUT) as response:
                 if response.status == 404:
                     logging.error(f"[Reddit] ({ip}) 404 Not Found for URL: {url}")
@@ -146,12 +160,12 @@ async def get_new_ip_and_update_session(session, tcp_connector):
     await close_session_and_connector(session, tcp_connector)
 
     # Create a new session
-    async with aiohttp.ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False) as new_session:
-        new_tcp_connector = TCPConnector(family=socket.AF_INET)
-        new_session._connector = new_tcp_connector
+    new_session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
+    new_tcp_connector = TCPConnector(family=socket.AF_INET)
+    new_session._connector = new_tcp_connector
 
-        logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
-        return new_session, new_tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
+    logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
+    return new_session, new_tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
 
 async def close_session_and_connector(session, tcp_connector):
     if not session.closed:
