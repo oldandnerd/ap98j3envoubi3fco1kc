@@ -117,16 +117,19 @@ async def get_new_ip_and_update_session(session, tcp_connector):
     jar = CookieJar()
     for cookie in new_ip_cookie['cookies']:
         jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
-
+    
     # Close the old session and connector
     await session.close()
     await tcp_connector.close()
-
+    
     # Create a new session
     session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
+    tcp_connector = TCPConnector(family=socket.AF_INET)
+    session._connector = tcp_connector
     
     logging.info(f"Updated session with new proxy {new_ip_cookie['ip']}:{new_ip_cookie['port']} and cookies")
-    return session, proxy_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
+    return session, tcp_connector, f"{new_ip_cookie['ip']}:{new_ip_cookie['port']}"
+
 
 
 
@@ -147,7 +150,6 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
             async with session.get(url, headers=headers, timeout=BASE_TIMEOUT) as response:
                 new_session, new_tcp_connector, new_ip = await handle_rate_limit(response, session, tcp_connector)
                 if new_session != session:
-                    await session.close()  # Close the old session
                     session = new_session
                     tcp_connector = new_tcp_connector
                     ip = new_ip
@@ -163,6 +165,7 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
             logging.warning(f"[Reddit] ({ip}) Request failed: {e}. Retrying... [{attempt + 1}/{retries}]")
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     raise aiohttp.ClientError(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
+
 
 
 
@@ -313,7 +316,8 @@ async def scrap_subreddit_new_layout(session: ClientSession, ip: str, subreddit_
     if count >= limit:
         return
     async with session.get(subreddit_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-        if await handle_rate_limit(response, session, tcp_connector):
+        session, tcp_connector, _ = await handle_rate_limit(response, session, tcp_connector)
+        if session is None:
             return
 
         html_content = await response.text()
