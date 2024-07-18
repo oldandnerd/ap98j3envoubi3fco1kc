@@ -26,6 +26,7 @@ from exorde_data import (
 from wordsegment import load, segment
 from tokenizers import Tokenizer, models, pre_tokenizers
 from aiohttp.client_exceptions import ClientConnectorError
+from cachetools import TTLCache
 
 # Load word segmentation library
 load()
@@ -38,6 +39,7 @@ logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.3:8000"
 NUM_IPS_TO_QUERY = 10
+CACHE_TTL = 300  # Time-to-live for subreddit URL cache
 
 USER_AGENT_LIST = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
@@ -56,6 +58,8 @@ DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3
 DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
 
+# Cache to store subreddit URLs temporarily
+subreddit_url_cache = TTLCache(maxsize=100, ttl=CACHE_TTL)
 
 async def ensure_session(session, tcp_connector):
     if session.closed:
@@ -303,12 +307,13 @@ def extract_subreddit_name(input_string):
     return match.group(1) if match else None
 
 async def get_subreddit_url_from_manager(ip: str) -> str:
-    for _ in range(3):  # Try up to 3 times to get a valid URL
-        url_response = await get_subreddit_url()
-        selected_subreddit_url = url_response['url']
-        logging.info(f"[Reddit] ({ip}) Retrieved subreddit URL: {selected_subreddit_url}")
-        return selected_subreddit_url
-    raise ValueError(f"[Reddit] ({ip}) Failed to retrieve a valid URL after multiple attempts")
+    if ip in subreddit_url_cache:
+        return subreddit_url_cache[ip]
+    url_response = await get_subreddit_url()
+    selected_subreddit_url = url_response['url']
+    logging.info(f"[Reddit] ({ip}) Retrieved subreddit URL: {selected_subreddit_url}")
+    subreddit_url_cache[ip] = selected_subreddit_url
+    return selected_subreddit_url
 
 def split_strings_subreddit_name(input_string):
     words = []
