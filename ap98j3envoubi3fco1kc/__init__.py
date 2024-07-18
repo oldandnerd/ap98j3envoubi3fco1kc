@@ -1,18 +1,28 @@
-import aiohttp
-import asyncio
+import json
 import random
+import aiohttp
 from aiohttp_socks import ProxyConnector
 from aiohttp import ClientSession, CookieJar, TCPConnector
 from yarl import URL
+import asyncio
 from typing import AsyncGenerator
-import hashlib
-import logging
 import time
 from datetime import datetime as datett
 from datetime import timezone
+import hashlib
+import logging
+import socket
 from lxml.html import fromstring
 import re
-from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
+from exorde_data import (
+    Item,
+    Content,
+    Author,
+    CreatedAt,
+    Title,
+    Url,
+    Domain,
+)
 from wordsegment import load, segment
 from tokenizers import Tokenizer, models, pre_tokenizers
 from aiohttp.client_exceptions import ClientConnectorError
@@ -89,6 +99,17 @@ async def get_subreddit_url():
             logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch subreddit URL: {e}")
             await asyncio.sleep(2 ** attempt)
     raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
+
+async def create_session_with_proxy(ip, port, cookies):
+    tcp_connector = TCPConnector(family=socket.AF_INET)  # Force IPv4
+    proxy_connector = ProxyConnector.from_url(f"socks5://{ip}:{port}", rdns=True)
+    jar = CookieJar()
+    for cookie in cookies:
+        jar.update_cookies({cookie['name']: cookie['value']}, response_url=URL(f"https://{cookie['domain']}"))
+    session = ClientSession(connector=proxy_connector, cookie_jar=jar, connector_owner=False)
+    session._connector = tcp_connector
+    logging.info(f"Created session with proxy {ip}:{port}")
+    return session, tcp_connector, f"{ip}:{port}"
 
 async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, backoff_factor=0.3):
     for attempt in range(retries):
