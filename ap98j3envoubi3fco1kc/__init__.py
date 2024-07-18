@@ -143,6 +143,7 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
             async with session.get(url, headers=headers, timeout=BASE_TIMEOUT) as response:
                 new_session, new_tcp_connector, new_ip = await handle_rate_limit(response, session, tcp_connector)
                 if new_session != session:
+                    await session.close()  # Close the old session
                     session = new_session
                     tcp_connector = new_tcp_connector
                     ip = new_ip
@@ -164,6 +165,7 @@ async def fetch_with_retry(session, url, headers, ip, tcp_connector, retries=5, 
 async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
+
     resolvers = {}
 
     async def post(data) -> AsyncGenerator[Item, None]:
@@ -267,6 +269,7 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
             logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] ({ip}) Failed to fetch {_url}: {e}")
+
 
 
 def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
@@ -377,6 +380,7 @@ async def scrap_subreddit_json(session: ClientSession, ip: str, subreddit_url: s
         logging.error(f"[Reddit] ({ip}) Failed to fetch {url_to_fetch}: {e}")
 
 
+
 def correct_reddit_url(url):
     parts = url.split("https://reddit.comhttps://", 1)
     if len(parts) == 2:
@@ -444,6 +448,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
             await session.close()
             await tcp_connector.close()
             await asyncio.sleep(0.1)
+
 
 async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, tcp_connector):
     items = []
