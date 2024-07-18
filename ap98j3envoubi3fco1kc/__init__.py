@@ -35,7 +35,7 @@ tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
 
 logging.basicConfig(level=logging.INFO)
 
-MANAGER_IP = "http://localhost:8000"
+MANAGER_IP = "http://192.227.159.2:8000"
 NUM_IPS_TO_QUERY = 5
 
 USER_AGENT_LIST = [
