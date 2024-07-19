@@ -57,7 +57,7 @@ DEFAULT_SKIP_PROBA = 0.1
 
 
 async def get_ip_and_cookie():
-    retries = 0
+    retries = 1
     for attempt in range(retries):
         try:
             async with aiohttp.ClientSession() as session:
