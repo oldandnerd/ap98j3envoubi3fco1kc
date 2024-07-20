@@ -8,7 +8,6 @@ from datetime import datetime as datett
 from datetime import timezone
 import hashlib
 import logging
-
 from lxml.html import fromstring
 import re
 from exorde_data import (
@@ -22,7 +21,6 @@ from exorde_data import (
 )
 from wordsegment import load, segment
 from tokenizers import Tokenizer, models, pre_tokenizers
-from aiohttp.client_exceptions import ClientConnectorError
 
 # Load word segmentation library
 load()
@@ -432,15 +430,19 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
 
     await asyncio.sleep(random.uniform(3, 15))
     
-    session = await create_session_with_proxy()
+    sessions = [await create_session_with_proxy() for _ in range(10)]
 
     try:
-        items = await scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight)
-        
-        for item in items:
-            if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
-                break
-            yield item
-            yielded_items += 1
+        scrape_tasks = [scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight) for session in sessions]
+        results = await asyncio.gather(*scrape_tasks)
+
+        for items in results:
+            for item in items:
+                if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
+                    break
+                yield item
+                yielded_items += 1
     finally:
-        await session.close()
+        for session in sessions:
+            await session.close()
+            await asyncio.sleep(0.1)
