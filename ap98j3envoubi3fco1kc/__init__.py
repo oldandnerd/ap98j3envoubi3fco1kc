@@ -55,25 +55,37 @@ DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3
 DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
 
-
-async def get_ip_and_cookie():
+async def check_ip_availability(session: ClientSession):
     retries = 1
     for attempt in range(retries):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f'{MANAGER_IP}/get_ip_and_cookie') as response:
-                    response.raise_for_status()
-                    return await response.json()
+            async with session.get(f'{MANAGER_IP}/check_ip_availability') as response:
+                response.raise_for_status()
+                return await response.json()
         except aiohttp.ClientError as e:
-            if response.status == 429:
-                logging.warning(f"[Retry {attempt + 1}/{retries}] Too Many Requests: {e}")
-                if attempt == retries - 1:
-                    raise
-                await asyncio.sleep(2 ** attempt)
-            else:
-                logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch IP and cookie: {e}")
-                await asyncio.sleep(2 ** attempt)
+            logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to check IP availability: {e}")
+            await asyncio.sleep(2 ** attempt)
     raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
+
+
+async def get_ip_and_cookie(session: ClientSession):
+    retries = 1
+    for attempt in range(retries):
+        try:
+            async with session.get(f'{MANAGER_IP}/get_ip_and_cookie') as response:
+                if response.status == 429:
+                    data = await response.json()
+                    retry_after = data.get("retry_after_seconds", 60)
+                    logging.warning(f"No available IPs. Retrying after {retry_after} seconds.")
+                    await asyncio.sleep(retry_after)
+                    continue
+                response.raise_for_status()
+                return await response.json()
+        except aiohttp.ClientError as e:
+            logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch IP and cookie: {e}")
+            await asyncio.sleep(2 ** attempt)
+    raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
+
 
 
 
@@ -462,52 +474,6 @@ def is_valid_item(item, min_post_length):
         item["content"] != "[deleted]"
     )
 
-async def query(parameters: dict) -> AsyncGenerator[Item, None]:
-    global MAX_EXPIRATION_SECONDS, SKIP_POST_PROBABILITY
-    (
-        max_oldness_seconds,
-        MAXIMUM_ITEMS_TO_COLLECT,
-        min_post_length,
-        nb_subreddit_attempts,
-        new_layout_scraping_weight,
-        SKIP_POST_PROBABILITY
-    ) = read_parameters(parameters)
-    logging.info(f"[Reddit] Input parameters: {parameters}")
-    MAX_EXPIRATION_SECONDS = max_oldness_seconds
-    yielded_items = 0
-
-    await asyncio.sleep(random.uniform(3, 15))
-    
-    proxies = []
-    for _ in range(NUM_IPS_TO_QUERY):
-        try:
-            proxy = await get_ip_and_cookie()
-            proxies.append(proxy)
-        except aiohttp.ClientError as e:
-            logging.warning(f"Stopped fetching IPs due to error: {e}")
-            break
-    
-    if not proxies:
-        logging.error("No proxies available. Exiting...")
-        return
-    
-    sessions = [await create_session_with_proxy(proxy['ip'], proxy['port'], proxy['cookies']) for proxy in proxies]
-
-    try:
-        scrape_tasks = [scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, tcp_connector) for session, tcp_connector, ip in sessions]
-        results = await asyncio.gather(*scrape_tasks)
-
-        for items in results:
-            for item in items:
-                if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
-                    break
-                yield item
-                yielded_items += 1
-    finally:
-        for session, tcp_connector, _ in sessions:
-            await close_session_and_connector(session, tcp_connector)
-            await asyncio.sleep(0.1)
-
 
 async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, tcp_connector):
     items = []
@@ -545,3 +511,59 @@ async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO
                 if count >= MAXIMUM_ITEMS_TO_COLLECT:
                     break
     return items
+
+async def query(parameters: dict) -> AsyncGenerator[Item, None]:
+    global MAX_EXPIRATION_SECONDS, SKIP_POST_PROBABILITY
+    (
+        max_oldness_seconds,
+        MAXIMUM_ITEMS_TO_COLLECT,
+        min_post_length,
+        nb_subreddit_attempts,
+        new_layout_scraping_weight,
+        SKIP_POST_PROBABILITY
+    ) = read_parameters(parameters)
+    logging.info(f"[Reddit] Input parameters: {parameters}")
+    MAX_EXPIRATION_SECONDS = max_oldness_seconds
+    yielded_items = 0
+
+    await asyncio.sleep(random.uniform(3, 15))
+
+    async with aiohttp.ClientSession() as session:
+        while yielded_items < MAXIMUM_ITEMS_TO_COLLECT:
+            ip_availability = await check_ip_availability(session)
+            available_ips_count = ip_availability["available_ips_count"]
+            
+            if available_ips_count == 0:
+                logging.warning("No available IPs. Retrying after 60 seconds.")
+                await asyncio.sleep(60)
+                continue
+
+            proxies = []
+            for _ in range(NUM_IPS_TO_QUERY):
+                try:
+                    proxy = await get_ip_and_cookie(session)
+                    proxies.append(proxy)
+                except aiohttp.ClientError as e:
+                    logging.warning(f"Stopped fetching IPs due to error: {e}")
+                    break
+
+            if not proxies:
+                logging.error("No proxies available. Exiting...")
+                return
+
+            sessions = [await create_session_with_proxy(proxy['ip'], proxy['port'], proxy['cookies']) for proxy in proxies]
+
+            try:
+                scrape_tasks = [scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, tcp_connector) for session, tcp_connector, ip in sessions]
+                results = await asyncio.gather(*scrape_tasks)
+
+                for items in results:
+                    for item in items:
+                        if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
+                            break
+                        yield item
+                        yielded_items += 1
+            finally:
+                for session, tcp_connector, _ in sessions:
+                    await close_session_and_connector(session, tcp_connector)
+                    await asyncio.sleep(0.1)
