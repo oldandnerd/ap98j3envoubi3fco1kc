@@ -49,7 +49,7 @@ DEFAULT_MIN_POST_LENGTH = 5
 DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3
 DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
-CONCURRENT_REQUESTS = 10  # Number of concurrent requests
+CONCURRENT_REQUESTS = 40  # Number of concurrent requests
 
 def read_parameters(parameters):
     if parameters and isinstance(parameters, dict):
@@ -74,10 +74,10 @@ async def create_session_with_proxy():
     logging.info("Created session through manager")
     return session
 
-async def get_subreddit_urls(count: int):
+async def get_subreddit_urls(count: int) -> List[str]:
     urls = []
     retries = 5
-    for _ in range(count):
+    while len(urls) < count:
         for attempt in range(retries):
             try:
                 async with aiohttp.ClientSession() as session:
@@ -369,9 +369,9 @@ def is_valid_item(item, min_post_length):
 async def scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight):
     items = []
     count = 0
-    url_tasks = []
 
-    urls = await get_subreddit_urls(nb_subreddit_attempts)
+    # Fetch the required number of URLs
+    urls = await get_subreddit_urls(nb_subreddit_attempts * CONCURRENT_REQUESTS)
 
     async def scrape_url(url):
         nonlocal count
@@ -401,7 +401,17 @@ async def scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COL
                 if count >= MAXIMUM_ITEMS_TO_COLLECT:
                     break
 
-    await asyncio.gather(*[scrape_url(url) for url in urls[:CONCURRENT_REQUESTS]])
+    tasks = []
+    for url in urls:
+        if count >= MAXIMUM_ITEMS_TO_COLLECT:
+            break
+        tasks.append(scrape_url(url))
+        if len(tasks) >= CONCURRENT_REQUESTS:
+            await asyncio.gather(*tasks)
+            tasks = []
+
+    if tasks:
+        await asyncio.gather(*tasks)
 
     return items
 
