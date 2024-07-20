@@ -60,19 +60,6 @@ async def get_new_ip():
         logging.error(f"Failed to request new IP: {e}")
         raise
 
-async def wait_for_ip_change():
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(f'{MANAGER_IP}/ip_ready') as response:
-                response.raise_for_status()
-                data = await response.json()
-                if data["status"] == "IP ready":
-                    logging.info("IP change confirmed by manager.")
-                    return True
-    except aiohttp.ClientError as e:
-        logging.error(f"Failed to wait for IP change: {e}")
-        raise
-
 def read_parameters(parameters):
     if parameters and isinstance(parameters, dict):
         max_oldness_seconds = parameters.get("max_oldness_seconds", DEFAULT_OLDNESS_SECONDS)
@@ -93,7 +80,6 @@ def read_parameters(parameters):
 
 async def create_session_with_proxy():
     await get_new_ip()  # Request new IP
-    await wait_for_ip_change()  # Wait for IP change confirmation
     session = ClientSession()  # Regular session since proxy is handled by the manager
     logging.info("Created session through manager")
     return session
@@ -114,7 +100,6 @@ async def get_subreddit_url():
 
 async def get_new_ip_and_update_session(session):
     await get_new_ip()
-    await wait_for_ip_change()
     await session.close()
     new_session = await create_session_with_proxy()
     logging.info("Updated session with new IP from manager")
@@ -256,7 +241,6 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
-
 
 def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
     current_timestamp = int(time.time())  # Get the current UNIX timestamp
