@@ -416,6 +416,7 @@ async def scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COL
                     break
     return items
 
+
 async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     global MAX_EXPIRATION_SECONDS, SKIP_POST_PROBABILITY
     (
@@ -449,3 +450,23 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
             await session.close()
             await asyncio.sleep(0.1)
 
+async def make_request(url, proxy):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, proxy=proxy, timeout=BASE_TIMEOUT) as response:
+            response.raise_for_status()
+            return await response.json()
+
+async def handle_proxy_request(request):
+    url = request.query.get('url')
+    if not url:
+        return web.Response(status=400, text="Missing URL")
+    
+    response_content = await make_request(url, proxy=None)
+    
+    if isinstance(response_content, str):
+        return web.Response(text=response_content)
+    return web.json_response(response_content)
+
+async def handle_new_ip_request(request):
+    await get_new_ip()
+    return web.Response(status=200, text="IP Updated")
