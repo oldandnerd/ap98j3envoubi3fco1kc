@@ -94,7 +94,8 @@ async def get_subreddit_url():
             async with aiohttp.ClientSession() as session:
                 async with session.get(f'{MANAGER_IP}/get_url') as response:
                     response.raise_for_status()
-                    return await response.json()
+                    data = await response.json()
+                    return data['url']
         except aiohttp.ClientError as e:
             logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch subreddit URL: {e}")
             await asyncio.sleep(2 ** attempt)
@@ -380,39 +381,6 @@ def is_valid_item(item, min_post_length):
         item["content"] != "[deleted]"
     )
 
-async def query(parameters: dict) -> AsyncGenerator[Item, None]:
-    global MAX_EXPIRATION_SECONDS, SKIP_POST_PROBABILITY
-    (
-        max_oldness_seconds,
-        MAXIMUM_ITEMS_TO_COLLECT,
-        min_post_length,
-        nb_subreddit_attempts,
-        new_layout_scraping_weight,
-        SKIP_POST_PROBABILITY
-    ) = read_parameters(parameters)
-    logging.info(f"Input parameters: {parameters}")
-    MAX_EXPIRATION_SECONDS = max_oldness_seconds
-    yielded_items = 0
-
-    await asyncio.sleep(random.uniform(3, 15))
-    
-    sessions = [await create_session_with_proxy() for _ in range(10)]
-
-    try:
-        scrape_tasks = [scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight) for session in sessions]
-        results = await asyncio.gather(*scrape_tasks)
-
-        for items in results:
-            for item in items:
-                if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
-                    break
-                yield item
-                yielded_items += 1
-    finally:
-        for session in sessions:
-            await session.close()
-            await asyncio.sleep(0.1)
-
 async def scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight):
     items = []
     count = 0
@@ -449,3 +417,37 @@ async def scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COL
                 if count >= MAXIMUM_ITEMS_TO_COLLECT:
                     break
     return items
+
+
+async def query(parameters: dict) -> AsyncGenerator[Item, None]:
+    global MAX_EXPIRATION_SECONDS, SKIP_POST_PROBABILITY
+    (
+        max_oldness_seconds,
+        MAXIMUM_ITEMS_TO_COLLECT,
+        min_post_length,
+        nb_subreddit_attempts,
+        new_layout_scraping_weight,
+        SKIP_POST_PROBABILITY
+    ) = read_parameters(parameters)
+    logging.info(f"Input parameters: {parameters}")
+    MAX_EXPIRATION_SECONDS = max_oldness_seconds
+    yielded_items = 0
+
+    await asyncio.sleep(random.uniform(3, 15))
+    
+    sessions = [await create_session_with_proxy() for _ in range(10)]
+
+    try:
+        scrape_tasks = [scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight) for session in sessions]
+        results = await asyncio.gather(*scrape_tasks)
+
+        for items in results:
+            for item in items:
+                if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
+                    break
+                yield item
+                yielded_items += 1
+    finally:
+        for session in sessions:
+            await session.close()
+            await asyncio.sleep(0.1)
