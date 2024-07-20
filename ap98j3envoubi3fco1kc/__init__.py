@@ -50,16 +50,6 @@ DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3
 DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
 
-async def get_new_ip():
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(f'{MANAGER_IP}/new_ip') as response:
-                response.raise_for_status()
-                return await response.json()
-    except aiohttp.ClientError as e:
-        logging.error(f"Failed to request new IP: {e}")
-        raise
-
 def read_parameters(parameters):
     if parameters and isinstance(parameters, dict):
         max_oldness_seconds = parameters.get("max_oldness_seconds", DEFAULT_OLDNESS_SECONDS)
@@ -79,7 +69,6 @@ def read_parameters(parameters):
     return max_oldness_seconds, maximum_items_to_collect, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, skip_post_probability
 
 async def create_session_with_proxy():
-    await get_new_ip()  # Request new IP
     session = ClientSession()  # Regular session since proxy is handled by the manager
     logging.info("Created session through manager")
     return session
@@ -98,17 +87,11 @@ async def get_subreddit_url():
             await asyncio.sleep(2 ** attempt)
     raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
 
-async def get_new_ip_and_update_session(session):
-    await get_new_ip()
-    await session.close()
-    new_session = await create_session_with_proxy()
-    logging.info("Updated session with new IP from manager")
-    return new_session
-
 async def handle_rate_limit(response, session):
     if response is not None and response.status == 429:
-        logging.warning("Rate limit exceeded. Requesting new IP.")
-        new_session = await get_new_ip_and_update_session(session)
+        logging.warning("Rate limit exceeded. Letting the manager handle IP rotation.")
+        await session.close()
+        new_session = await create_session_with_proxy()
         return new_session
     return session
 
@@ -123,8 +106,8 @@ async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3)
                     logging.warning(f"[Reddit] 403 Forbidden for URL: {url}. Not retrying.")
                     return None
                 if response.status == 429:
-                    logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
-                    session = await get_new_ip_and_update_session(session)
+                    logging.warning(f"[Reddit] Rate limit exceeded. Letting the manager handle IP rotation.")
+                    session = await handle_rate_limit(response, session)
                     continue  # Retry immediately with the new IP
                 response.raise_for_status()
                 return await response.json()
