@@ -430,19 +430,15 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
 
     await asyncio.sleep(random.uniform(3, 15))
     
-    sessions = [await create_session_with_proxy() for _ in range(10)]
+    session = await create_session_with_proxy()
 
     try:
-        scrape_tasks = [scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight) for session in sessions]
-        results = await asyncio.gather(*scrape_tasks)
+        items = await scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight)
 
-        for items in results:
-            for item in items:
-                if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
-                    break
-                yield item
-                yielded_items += 1
+        for item in items:
+            if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
+                break
+            yield item
+            yielded_items += 1
     finally:
-        for session in sessions:
-            await session.close()
-            await asyncio.sleep(0.1)
+        await session.close()
