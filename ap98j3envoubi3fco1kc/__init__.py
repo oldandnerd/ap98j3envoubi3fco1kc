@@ -1,5 +1,4 @@
 import random
-#from aiohttp_socks import ProxyConnector
 import aiohttp
 from aiohttp import ClientSession
 import asyncio
@@ -100,7 +99,6 @@ async def get_subreddit_url():
             logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch subreddit URL: {e}")
             await asyncio.sleep(2 ** attempt)
     raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
-
 
 async def get_new_ip_and_update_session(session):
     await get_new_ip()
@@ -418,7 +416,6 @@ async def scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COL
                     break
     return items
 
-
 async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     global MAX_EXPIRATION_SECONDS, SKIP_POST_PROBABILITY
     (
@@ -451,3 +448,4 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
         for session in sessions:
             await session.close()
             await asyncio.sleep(0.1)
+
