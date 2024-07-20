@@ -50,11 +50,6 @@ DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3
 DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
 
-# Shared state for rate limit tracking
-rate_limit_hits = 0
-RATE_LIMIT_THRESHOLD = 5  # Customize based on acceptable rate limit hits before slowing down
-RATE_LIMIT_BACKOFF_BASE = 5  # Base backoff time in seconds
-
 async def get_new_ip():
     try:
         async with aiohttp.ClientSession() as session:
@@ -63,20 +58,6 @@ async def get_new_ip():
                 return await response.json()
     except aiohttp.ClientError as e:
         logging.error(f"Failed to request new IP: {e}")
-        raise
-
-async def check_ip_status():
-    try:
-        async with aiohttp.ClientSession() as session:
-            while True:
-                async with session.get(f'{MANAGER_IP}/new_ip_status') as response:
-                    response.raise_for_status()
-                    status = await response.json()
-                    if status['status'] == 'ready':
-                        return
-                await asyncio.sleep(2)  # Polling interval
-    except aiohttp.ClientError as e:
-        logging.error(f"Failed to check IP status: {e}")
         raise
 
 def read_parameters(parameters):
@@ -99,7 +80,6 @@ def read_parameters(parameters):
 
 async def create_session_with_proxy():
     await get_new_ip()  # Request new IP
-    await check_ip_status()  # Wait until new IP is ready
     session = ClientSession()  # Regular session since proxy is handled by the manager
     logging.info("Created session through manager")
     return session
@@ -120,21 +100,14 @@ async def get_subreddit_url():
 
 async def get_new_ip_and_update_session(session):
     await get_new_ip()
-    await check_ip_status()  # Wait until new IP is ready
     await session.close()
     new_session = await create_session_with_proxy()
     logging.info("Updated session with new IP from manager")
     return new_session
 
 async def handle_rate_limit(response, session):
-    global rate_limit_hits
     if response is not None and response.status == 429:
         logging.warning("Rate limit exceeded. Requesting new IP.")
-        rate_limit_hits += 1
-        if rate_limit_hits >= RATE_LIMIT_THRESHOLD:
-            backoff_time = RATE_LIMIT_BACKOFF_BASE * (2 ** (rate_limit_hits - RATE_LIMIT_THRESHOLD))
-            logging.warning(f"Backoff due to rate limits. Sleeping for {backoff_time} seconds.")
-            await asyncio.sleep(backoff_time)
         new_session = await get_new_ip_and_update_session(session)
         return new_session
     return session
