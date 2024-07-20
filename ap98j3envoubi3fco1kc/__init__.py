@@ -1,4 +1,5 @@
 import random
+#from aiohttp_socks import ProxyConnector
 import aiohttp
 from aiohttp import ClientSession
 import asyncio
@@ -8,6 +9,7 @@ from datetime import datetime as datett
 from datetime import timezone
 import hashlib
 import logging
+
 from lxml.html import fromstring
 import re
 from exorde_data import (
@@ -80,16 +82,10 @@ def read_parameters(parameters):
     return max_oldness_seconds, maximum_items_to_collect, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, skip_post_probability
 
 async def create_session_with_proxy():
-    try:
-        await get_new_ip()  # Request new IP
-        proxy_url = f"{MANAGER_IP}/proxy_request"
-        proxy_connector = ProxyConnector.from_url(proxy_url, rdns=True)
-        session = ClientSession(connector=proxy_connector, connector_owner=False)
-        logging.info(f"Created session with proxy managed by the manager")
-        return session
-    except aiohttp.ClientError as e:
-        logging.error(f"Failed to get proxy information from manager: {e}")
-        raise
+    await get_new_ip()  # Request new IP
+    session = ClientSession()  # Regular session since proxy is handled by the manager
+    logging.info("Created session through manager")
+    return session
 
 async def get_subreddit_url():
     retries = 5
@@ -104,6 +100,7 @@ async def get_subreddit_url():
             await asyncio.sleep(2 ** attempt)
     raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
 
+
 async def get_new_ip_and_update_session(session):
     await get_new_ip()
     await session.close()
@@ -112,8 +109,8 @@ async def get_new_ip_and_update_session(session):
     return new_session
 
 async def handle_rate_limit(response, session):
-    if response.status == 429:
-        logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
+    if response is not None and response.status == 429:
+        logging.warning("Rate limit exceeded. Requesting new IP.")
         new_session = await get_new_ip_and_update_session(session)
         return new_session
     return session
@@ -121,7 +118,7 @@ async def handle_rate_limit(response, session):
 async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3):
     for attempt in range(retries):
         try:
-            async with session.get(url, headers=headers, timeout=BASE_TIMEOUT) as response:
+            async with session.get(f"{MANAGER_IP}/proxy_request?url={url}", headers=headers, timeout=BASE_TIMEOUT) as response:
                 if response.status == 404:
                     logging.error(f"[Reddit] 404 Not Found for URL: {url}")
                     return None
@@ -134,8 +131,6 @@ async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3)
                     continue  # Retry immediately with the new IP
                 response.raise_for_status()
                 return await response.json()
-        except ClientConnectorError as e:
-            logging.warning(f"[Reddit] DNS resolution failed: {e}. Retrying... [{attempt + 1}/{retries}]")
         except aiohttp.ClientError as e:
             logging.warning(f"[Reddit] Request failed: {e}. Retrying... [{attempt + 1}/{retries}]")
         await asyncio.sleep(backoff_factor * (2 ** attempt))
