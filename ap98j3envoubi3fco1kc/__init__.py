@@ -74,19 +74,24 @@ async def create_session_with_proxy():
     logging.info("Created session through manager")
     return session
 
-async def get_subreddit_url():
+async def get_subreddit_urls(count: int):
+    urls = []
     retries = 5
-    for attempt in range(retries):
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f'{MANAGER_IP}/get_url') as response:
-                    response.raise_for_status()
-                    data = await response.json()
-                    return data['url']
-        except aiohttp.ClientError as e:
-            logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch subreddit URL: {e}")
-            await asyncio.sleep(2 ** attempt)
-    raise aiohttp.ClientError(f"Failed to connect to {MANAGER_IP} after {retries} attempts")
+    for _ in range(count):
+        for attempt in range(retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'{MANAGER_IP}/get_url') as response:
+                        response.raise_for_status()
+                        data = await response.json()
+                        urls.append(data['url'])
+                        break
+            except aiohttp.ClientError as e:
+                logging.warning(f"[Retry {attempt + 1}/{retries}] Failed to fetch subreddit URL: {e}")
+                await asyncio.sleep(2 ** attempt)
+    if len(urls) < count:
+        raise aiohttp.ClientError(f"Failed to fetch {count} subreddit URLs after {retries} attempts")
+    return urls
 
 async def handle_rate_limit(response, session):
     if response is not None and response.status == 429:
@@ -366,10 +371,7 @@ async def scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COL
     count = 0
     url_tasks = []
 
-    for _ in range(nb_subreddit_attempts):
-        url = await get_subreddit_url()
-        if url:
-            url_tasks.append(url)
+    urls = await get_subreddit_urls(nb_subreddit_attempts)
 
     async def scrape_url(url):
         nonlocal count
@@ -399,7 +401,7 @@ async def scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COL
                 if count >= MAXIMUM_ITEMS_TO_COLLECT:
                     break
 
-    await asyncio.gather(*[scrape_url(url) for url in url_tasks[:CONCURRENT_REQUESTS]])
+    await asyncio.gather(*[scrape_url(url) for url in urls[:CONCURRENT_REQUESTS]])
 
     return items
 
