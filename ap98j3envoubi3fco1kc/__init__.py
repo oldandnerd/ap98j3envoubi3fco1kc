@@ -2,7 +2,7 @@ import random
 import aiohttp
 from aiohttp import ClientSession
 import asyncio
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List
 import time
 from datetime import datetime as datett
 from datetime import timezone
@@ -49,6 +49,7 @@ DEFAULT_MIN_POST_LENGTH = 5
 DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3
 DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
+CONCURRENT_REQUESTS = 10  # Number of concurrent requests
 
 def read_parameters(parameters):
     if parameters and isinstance(parameters, dict):
@@ -363,18 +364,20 @@ def is_valid_item(item, min_post_length):
 async def scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight):
     items = []
     count = 0
-    for i in range(nb_subreddit_attempts):
-        await asyncio.sleep(random.uniform(1, i))
+    url_tasks = []
+
+    for _ in range(nb_subreddit_attempts):
         url = await get_subreddit_url()
-        if not url:
-            continue
+        if url:
+            url_tasks.append(url)
+
+    async def scrape_url(url):
+        nonlocal count
         if url.endswith("/new/new/.json"):
             url = url.replace("/new/new/.json", "/new.json")
-        logging.info(f"Attempt {(i+1)}/{nb_subreddit_attempts} Scraping {url} with max oldness of {max_oldness_seconds}")
-        if "reddit.com" not in url:
-            raise ValueError(f"Not a Reddit URL {url}")
-        url_parameters = url.split("reddit.com")[1].split("/")[1:]
-        if "comments" in url_parameters:
+        logging.info(f"Scraping {url} with max oldness of {max_oldness_seconds}")
+
+        if "comments" in url.split("reddit.com")[1].split("/")[1:]:
             async for result in scrap_post(session, url, count, MAXIMUM_ITEMS_TO_COLLECT):
                 result = post_process_item(result)
                 if is_valid_item(result, min_post_length):
@@ -395,6 +398,9 @@ async def scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COL
                     count += 1
                 if count >= MAXIMUM_ITEMS_TO_COLLECT:
                     break
+
+    await asyncio.gather(*[scrape_url(url) for url in url_tasks[:CONCURRENT_REQUESTS]])
+
     return items
 
 async def query(parameters: dict) -> AsyncGenerator[Item, None]:
