@@ -534,8 +534,13 @@ async def scrap_post(session: ClientSession, ip: str, url: str, count: int, limi
                 if count < limit:
                     yield item
                     count += 1
+        except RecursionError as err:
+            logging.error(f"Recursion error detected: {err}")
+            return
         except Exception as err:
+            logging.error(f"An error occurred in kind resolver: {err}")
             raise err
+
 
     async def listing(data) -> AsyncGenerator[Item, None]:
         nonlocal count
