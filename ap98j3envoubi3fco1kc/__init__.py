@@ -226,6 +226,10 @@ async def scrap_post(session: ClientSession, ip: str, port: str, url: str, count
                 yield item_
                 count += 1
 
+    async def more(data) -> AsyncGenerator[Item, None]:
+        for __item__ in []:
+            yield Item()
+
     async def listing(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         for item_data in data["data"]["children"]:
@@ -235,6 +239,24 @@ async def scrap_post(session: ClientSession, ip: str, port: str, url: str, count
                 if count < limit:
                     yield item
                     count += 1
+
+    async def kind(data) -> AsyncGenerator[Item, None]:
+        nonlocal count
+        if count >= limit:
+            return
+        if not isinstance(data, dict):
+            return
+        resolver = resolvers.get(data["kind"], None)
+        if not resolver:
+            logging.warning(f"[Reddit] ({ip}) {data['kind']} is not implemented. Skipping...")
+            return
+        try:
+            async for item in resolver(data):
+                if count < limit:
+                    yield item
+                    count += 1
+        except Exception as err:
+            raise err
 
     resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
     _url = url + ".json"
@@ -270,52 +292,6 @@ async def scrap_post(session: ClientSession, ip: str, port: str, url: str, count
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] ({ip}) Failed to fetch {_url}: {e}")
 
-    async def more(data):
-        """Resolver for 'more' kind that simply yields an empty item."""
-        logging.warning(f"[Reddit] ({ip}) Handling 'more' object by yielding an empty item.")
-        for _ in []:
-            yield Item()
-
-    async def kind(data) -> AsyncGenerator[Item, None]:
-        nonlocal count
-        if count >= limit:
-            return
-        if not isinstance(data, dict):
-            return
-        resolver = resolvers.get(data["kind"], None)
-        if not resolver:
-            logging.warning(f"[Reddit] ({ip}) {data['kind']} is not implemented. Skipping...")
-            return
-        try:
-            async for item in resolver(data):
-                if count < limit:
-                    yield item
-                    count += 1
-        except Exception as err:
-            raise err
-
-
-    resolvers = {"Listing": kind, "t1": comment, "t3": post}
-
-    _url = url + ".json"
-    logging.info(f"[Reddit] ({ip}) Scraping - getting {_url}")
-
-    try:
-        response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, ip=ip, port=port, tcp_connector=tcp_connector)
-        if not response_json:
-            return
-        [_post, comments] = response_json
-        async for item in kind(_post):
-            if count < limit:
-                yield item
-                count += 1
-        for result in comments["data"]["children"]:
-            async for item in kind(result):
-                if count < limit:
-                    yield item
-                    count += 1
-    except aiohttp.ClientError as e:
-        logging.error(f"[Reddit] ({ip}) Failed to fetch {_url}: {e}")
 
 async def scrap_subreddit(session: ClientSession, ip: str, port: str, subreddit_url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
