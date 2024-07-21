@@ -9,6 +9,7 @@ from datetime import datetime as datett
 from datetime import timezone
 import hashlib
 import logging
+import os
 from lxml.html import fromstring
 import re
 from exorde_data import (
@@ -417,10 +418,14 @@ subreddits_top_1000 = [
     "r/Calgary","r/furry","r/csMajors","r/Bedbugs","r/DBZDokkanBattle","r/mumbai","r/popheadscirclejerk","r/marvelmemes","r/Egypt","r/Topster",
 ]
 
-def load_cookies(file_path):
-    with open(file_path, 'r') as file:
-        cookies = json.load(file)
-    return {cookie['name']: cookie['value'] for cookie in cookies}
+def load_cookies(directory_path):
+    for filename in os.listdir(directory_path):
+        if filename.endswith(".json"):
+            file_path = os.path.join(directory_path, filename)
+            with open(file_path, 'r') as file:
+                cookies = json.load(file)
+            return {cookie['name']: cookie['value'] for cookie in cookies}
+    raise FileNotFoundError("No .json file found in the specified directory")
 
 async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
     """
@@ -585,6 +590,7 @@ async def scrap_post(url: str, session_cookies) -> AsyncGenerator[Item, None]:
         await session.close()
 
 
+
 def split_strings_subreddit_name(input_string):
     words = []
     start = 0
@@ -622,6 +628,7 @@ async def scrap_subreddit_new_layout(subreddit_url: str, session_cookies) -> Asy
                         pass
     except:
         await session.close()
+
 
 
 def find_permalinks(data):
@@ -668,6 +675,7 @@ async def scrap_subreddit_json(subreddit_url: str, session_cookies) -> AsyncGene
 
     except:
         await session.close()
+
 
 
 
@@ -780,7 +788,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     MAX_EXPIRATION_SECONDS = max_oldness_seconds
     yielded_items = 0  # Counter for the number of yielded items
 
-    cookies = load_cookies("/exorde/1.json")
+    cookies = load_cookies("/exorde/")
 
     await asyncio.sleep(random.uniform(3, 15))
     for i in range(nb_subreddit_attempts):
