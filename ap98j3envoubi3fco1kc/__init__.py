@@ -148,6 +148,8 @@ async def report_rate_limit(ip: str, port: str):
     except aiohttp.ClientError as e:
         logging.error(f"Failed to report rate limit for IP {ip}:{port}: {e}")
 
+
+
 async def handle_rate_limit(response, session, ip, port, tcp_connector):
     if response.status == 429:
         logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
@@ -330,12 +332,14 @@ def split_strings_subreddit_name(input_string):
     words.append(input_string[start:])
     return ' '.join(words)
 
+
+
 async def scrap_subreddit_new_layout(session: ClientSession, ip: str, port: str, subreddit_url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
     session, tcp_connector = await ensure_session(session, tcp_connector)
     async with session.get(subreddit_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-        session, tcp_connector, _ = await handle_rate_limit(response, session, ip, port, tcp_connector)
+        session, tcp_connector, ip, port = await handle_rate_limit(response, session, ip, port, tcp_connector)
         if session is None:
             return
 
@@ -357,6 +361,7 @@ async def scrap_subreddit_new_layout(session: ClientSession, ip: str, port: str,
                         count += 1
             except Exception as e:
                 logging.exception(f"[Reddit] ({ip}) Error scraping post {url}: {e}")
+
 
 def find_permalinks(data):
     if isinstance(data, dict):
@@ -441,6 +446,8 @@ def is_valid_item(item, min_post_length):
         "reddit.com" in item["url"] and
         item["content"] != "[deleted]"
     )
+
+
 
 async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     global MAX_EXPIRATION_SECONDS, SKIP_POST_PROBABILITY
