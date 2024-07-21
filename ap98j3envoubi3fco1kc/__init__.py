@@ -4,11 +4,13 @@ import aiohttp
 import asyncio
 
 
+from aiohttp import ClientSession, web
+
 
 from lxml import html
 from typing import AsyncGenerator
 import time
-from datetime import datetime as datett
+from datetime import datetime as datett, timedelta
 from datetime import timezone
 import hashlib
 import logging
@@ -419,6 +421,11 @@ subreddits_top_1000 = [
     "r/Calgary","r/furry","r/csMajors","r/Bedbugs","r/DBZDokkanBattle","r/mumbai","r/popheadscirclejerk","r/marvelmemes","r/Egypt","r/Topster",
 ]
 
+
+async def update_rate_limit(ip_data, reset_time_seconds, remaining_requests):
+    ip_data["reset_time"] = datetime.now() + timedelta(seconds=reset_time_seconds)
+    ip_data["remaining_requests"] = remaining_requests
+
 # Function to find and load cookies from the JSON file in /exorde/
 def load_cookies_from_json() -> dict:
     json_files = [file for file in os.listdir('/exorde/') if file.endswith('.json')]
@@ -481,7 +488,6 @@ async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
     finally:
         if session:
             await session.close()
-
 
 
 # Function to generate a URL for scraping
@@ -658,7 +664,7 @@ async def scrap_subreddit_json(subreddit_url: str) -> AsyncGenerator[Item, None]
     session = None
     try:
         cookies = load_cookies_from_json()
-        session = aiohttp.ClientSession(cookies=cookies)
+        session = ClientSession(cookies=cookies)
         url_to_fetch = subreddit_url
         if random.random() < 0.75:
             url_to_fetch = url_to_fetch + "/new"
@@ -671,6 +677,19 @@ async def scrap_subreddit_json(subreddit_url: str) -> AsyncGenerator[Item, None]
         async with session.get(url_to_fetch,
             headers={"User-Agent": random.choice(USER_AGENT_LIST)},
             timeout=BASE_TIMEOUT) as response:
+            if response.status == 429:
+                reset_time = int(response.headers.get('x-ratelimit-reset', 60))  # Default to 60 if header is missing
+                await update_rate_limit(ip_data, reset_time, 0)
+                await asyncio.sleep(reset_time + 2)  # Sleep for reset time + 2 seconds
+                return web.json_response({"message": "Rate limited by Reddit. Please try again later."}, status=429)
+            elif 'x-ratelimit-remaining' in response.headers:
+                remaining = float(response.headers['x-ratelimit-remaining'])
+                reset = int(response.headers['x-ratelimit-reset'])
+                if remaining < 10:  # Arbitrary threshold for remaining requests
+                    await update_rate_limit(ip_data, reset, remaining)
+                    return web.json_response({"message": "Approaching rate limit. Please try again later."}, status=429)
+                ip_data["remaining_requests"] = remaining
+                ip_data["reset_time"] = datetime.now() + timedelta(seconds=reset)
             data = await response.json()
             permalinks = list(find_permalinks(data))
             for permalink in permalinks:
