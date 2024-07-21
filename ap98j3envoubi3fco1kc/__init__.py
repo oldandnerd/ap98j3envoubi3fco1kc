@@ -2,6 +2,9 @@ import os
 import random
 import aiohttp
 import asyncio
+
+
+
 from lxml import html
 from typing import AsyncGenerator
 import time
@@ -421,12 +424,33 @@ def load_cookies_from_json() -> dict:
     json_files = [file for file in os.listdir('/exorde/') if file.endswith('.json')]
     if not json_files:
         raise FileNotFoundError("No JSON cookie files found in /exorde/ directory.")
-    cookies_file = json_files[0]  # Assuming there is only one cookies file
-    with open(f'/exorde/{cookies_file}', 'r') as file:
-        cookies_list = json.load(file)
     
-    cookies = {cookie['name']: cookie['value'] for cookie in cookies_list}
-    return cookies
+    cookies_file = json_files[0]  # Assuming there is only one cookies file
+    logging.info(f"Loading cookies from {cookies_file}")
+    
+    with open(f'/exorde/{cookies_file}', 'r') as file:
+        try:
+            cookies_list = json.load(file)
+            if not isinstance(cookies_list, list):
+                raise ValueError("Cookies JSON is not a list")
+
+            # Ensure each item in cookies_list is a dictionary
+            for cookie in cookies_list:
+                if not isinstance(cookie, dict):
+                    raise ValueError("Each cookie should be a dictionary")
+
+            # Convert cookies_list to the format aiohttp expects
+            cookies = {cookie['name']: cookie['value'] for cookie in cookies_list}
+            return cookies
+        except json.JSONDecodeError as e:
+            logging.error(f"Error decoding JSON from {cookies_file}: {e}")
+            raise
+        except KeyError as e:
+            logging.error(f"Missing expected key in cookies JSON: {e}")
+            raise
+        except ValueError as e:
+            logging.error(f"Error processing cookies JSON: {e}")
+            raise
 
 
 # Function to find a random subreddit URL based on a keyword
@@ -664,7 +688,6 @@ async def scrap_subreddit_json(subreddit_url: str) -> AsyncGenerator[Item, None]
     finally:
         if session:
             await session.close()
-
 
 # Default values for query parameters
 DEFAULT_OLDNESS_SECONDS = 36000
