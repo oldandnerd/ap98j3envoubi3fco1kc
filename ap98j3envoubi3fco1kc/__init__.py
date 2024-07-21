@@ -487,6 +487,49 @@ def is_valid_item(item, min_post_length):
         item["content"] != "[deleted]"
     )
 
+
+
+
+async def scrape_with_session(session, ip, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight):
+    items = []
+    count = 0
+    for i in range(nb_subreddit_attempts):
+        await asyncio.sleep(random.uniform(1, i))
+        url = await get_subreddit_url_from_manager(ip)  # Pass the IP argument here
+        if not url:
+            continue
+        logging.info(f"[Reddit] ({ip}) Attempt {(i+1)}/{nb_subreddit_attempts} Scraping {url} with max oldness of {max_oldness_seconds}")
+        if "reddit.com" not in url:
+            raise ValueError(f"Not a Reddit URL {url}")
+        if "comments" in url.split("reddit.com")[1].split("/")[1:]:
+            async for result in scrap_post(session, ip, url, count, MAXIMUM_ITEMS_TO_COLLECT):
+                result = post_process_item(result)
+                if is_valid_item(result, min_post_length):
+                    logging.info(f"[Reddit] ({ip}) Found Reddit post: {result}")
+                    items.append(result)
+                    count += 1
+                if count >= MAXIMUM_ITEMS_TO_COLLECT:
+                    break
+        else:
+            selected_function = scrap_subreddit_json
+            if random.random() < new_layout_scraping_weight:
+                selected_function = scrap_subreddit_new_layout
+            async for result in selected_function(session, ip, url, count, MAXIMUM_ITEMS_TO_COLLECT):
+                result = post_process_item(result)
+                if is_valid_item(result, min_post_length):
+                    logging.info(f"[Reddit] ({ip}) Found Reddit comment: {result}")
+                    items.append(result)
+                    count += 1
+                if count >= MAXIMUM_ITEMS_TO_COLLECT:
+                    break
+    return items
+
+
+
+
+
+
+
 async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     global MAX_EXPIRATION_SECONDS, SKIP_POST_PROBABILITY
     (
@@ -519,7 +562,10 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     sessions = [await create_session_with_proxy(proxy['ip'], proxy['port'], proxy['cookies']) for proxy in proxies]
 
     try:
-        scrape_tasks = [scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight) for session in sessions]
+        scrape_tasks = [
+            scrape_with_session(session, proxy['ip'], max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight)
+            for session, proxy in zip(sessions, proxies)
+        ]
         results = await asyncio.gather(*scrape_tasks)
 
         for items in results:
@@ -532,38 +578,3 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
         for session in sessions:
             await session.close()
             await asyncio.sleep(0.1)
-
-
-async def scrape_with_session(session, max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight):
-    items = []
-    count = 0
-    for i in range(nb_subreddit_attempts):
-        await asyncio.sleep(random.uniform(1, i))
-        url = await get_subreddit_url_from_manager()
-        if not url:
-            continue
-        logging.info(f"[Reddit] Attempt {(i+1)}/{nb_subreddit_attempts} Scraping {url} with max oldness of {max_oldness_seconds}")
-        if "reddit.com" not in url:
-            raise ValueError(f"Not a Reddit URL {url}")
-        if "comments" in url.split("reddit.com")[1].split("/")[1:]:
-            async for result in scrap_post(session, url, count, MAXIMUM_ITEMS_TO_COLLECT):
-                result = post_process_item(result)
-                if is_valid_item(result, min_post_length):
-                    logging.info(f"[Reddit] Found Reddit post: {result}")
-                    items.append(result)
-                    count += 1
-                if count >= MAXIMUM_ITEMS_TO_COLLECT:
-                    break
-        else:
-            selected_function = scrap_subreddit_json
-            if random.random() < new_layout_scraping_weight:
-                selected_function = scrap_subreddit_new_layout
-            async for result in selected_function(session, url, count, MAXIMUM_ITEMS_TO_COLLECT):
-                result = post_process_item(result)
-                if is_valid_item(result, min_post_length):
-                    logging.info(f"[Reddit] Found Reddit comment: {result}")
-                    items.append(result)
-                    count += 1
-                if count >= MAXIMUM_ITEMS_TO_COLLECT:
-                    break
-    return items
