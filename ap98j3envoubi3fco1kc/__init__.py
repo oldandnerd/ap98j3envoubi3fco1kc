@@ -423,34 +423,41 @@ def load_cookies_from_json() -> dict:
         raise FileNotFoundError("No JSON cookie files found in /exorde/ directory.")
     cookies_file = json_files[0]  # Assuming there is only one cookies file
     with open(f'/exorde/{cookies_file}', 'r') as file:
-        cookies = json.load(file)
+        cookies_list = json.load(file)
+    
+    cookies = {cookie['name']: cookie['value'] for cookie in cookies_list}
     return cookies
+
 
 # Function to find a random subreddit URL based on a keyword
 async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
     logging.info(f"[Reddit] Searching for subreddits with keyword: {keyword}")
+    session = None
     try:
-        async with aiohttp.ClientSession(cookies=load_cookies_from_json()) as session:
-            async with session.get(
-                f"https://www.reddit.com/search/?q={keyword}&type=sr",
-                headers={"User-Agent": random.choice(USER_AGENT_LIST)},
-                timeout=BASE_TIMEOUT
-            ) as response:
-                html_content = await response.text()
-                tree = html.fromstring(html_content)
-                urls = [
-                    url for url in tree.xpath('//a[contains(@href, "/r/")]//@href')
-                    if not "/r/popular" in url
-                ]
-                if not urls:
-                    raise ValueError(f"No subreddits found for keyword: {keyword}")
-                result = f"https://reddit.com{random.choice(urls)}/new"
-                return result
+        cookies = load_cookies_from_json()
+        session = aiohttp.ClientSession(cookies=cookies)
+        async with session.get(
+            f"https://www.reddit.com/search/?q={keyword}&type=sr",
+            headers={"User-Agent": random.choice(USER_AGENT_LIST)},
+            timeout=BASE_TIMEOUT
+        ) as response:
+            html_content = await response.text()
+            tree = html.fromstring(html_content)
+            urls = [
+                url for url in tree.xpath('//a[contains(@href, "/r/")]//@href')
+                if not "/r/popular" in url
+            ]
+            if not urls:
+                raise ValueError(f"No subreddits found for keyword: {keyword}")
+            result = f"https://reddit.com{random.choice(urls)}/new"
+            return result
     except Exception as e:
         logging.error(f"Error finding subreddit for keyword '{keyword}': {e}")
         raise
     finally:
-        await session.close()
+        if session:
+            await session.close()
+
 
 
 # Function to generate a URL for scraping
@@ -624,35 +631,40 @@ def find_permalinks(data):
 
 # Function to scrape a subreddit using JSON
 async def scrap_subreddit_json(subreddit_url: str) -> AsyncGenerator[Item, None]:
+    session = None
     try:
-        async with aiohttp.ClientSession(cookies=load_cookies_from_json()) as session:
-            url_to_fetch = subreddit_url
-            if random.random() < 0.75:
-                url_to_fetch = url_to_fetch + "/new"
-            url_to_fetch = url_to_fetch + "/.json"
-            if url_to_fetch.endswith("/new/new/.json"):
-                url_to_fetch = url_to_fetch.replace("/new/new/.json", "/new.json")
-            logging.info("[Reddit] [JSON MODE] opening: %s", url_to_fetch)
-            await asyncio.sleep(1)
-            async with session.get(url_to_fetch,
-                headers={"User-Agent": random.choice(USER_AGENT_LIST)},
-                timeout=BASE_TIMEOUT) as response:
-                data = await response.json()
-                permalinks = list(find_permalinks(data))
+        cookies = load_cookies_from_json()
+        session = aiohttp.ClientSession(cookies=cookies)
+        url_to_fetch = subreddit_url
+        if random.random() < 0.75:
+            url_to_fetch = url_to_fetch + "/new"
+        url_to_fetch = url_to_fetch + "/.json"
+        if url_to_fetch.endswith("/new/new/.json"):
+            url_to_fetch = url_to_fetch.replace("/new/new/.json", "/new.json")
+        
+        logging.info("[Reddit] [JSON MODE] opening: %s", url_to_fetch)
+        await asyncio.sleep(1)
+        async with session.get(url_to_fetch,
+            headers={"User-Agent": random.choice(USER_AGENT_LIST)},
+            timeout=BASE_TIMEOUT) as response:
+            data = await response.json()
+            permalinks = list(find_permalinks(data))
+            for permalink in permalinks:
+                try:
+                    if random.random() < SKIP_POST_PROBABILITY:
+                        url = permalink
+                        if "https" not in url:
+                            url = f"https://reddit.com{url}"
+                        async for item in scrap_post(url):
+                            yield item
+                except Exception as e:
+                    logging.exception(f"[Reddit] [JSON MODE] Error detected")
+    except Exception as e:
+        logging.error(f"Error scraping subreddit JSON: {e}")
+    finally:
+        if session:
+            await session.close()
 
-                for permalink in permalinks:
-                    try:
-                        if random.random() < SKIP_POST_PROBABILITY:
-                            url = permalink
-                            if "https" not in url:
-                                url = f"https://reddit.com{url}"
-                            async for item in scrap_post(url):
-                                yield item
-                    except Exception as e:
-                        logging.exception(f"[Reddit] [JSON MODE] Error detected")
-
-    except:
-        await session.close()
 
 # Default values for query parameters
 DEFAULT_OLDNESS_SECONDS = 36000
