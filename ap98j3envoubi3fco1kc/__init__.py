@@ -428,6 +428,7 @@ def load_cookies_from_json() -> dict:
 
 # Function to find a random subreddit URL based on a keyword
 async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
+    logging.info(f"[Reddit] Searching for subreddits with keyword: {keyword}")
     try:
         async with aiohttp.ClientSession(cookies=load_cookies_from_json()) as session:
             async with session.get(
@@ -441,10 +442,16 @@ async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
                     url for url in tree.xpath('//a[contains(@href, "/r/")]//@href')
                     if not "/r/popular" in url
                 ]
-                result = f"https:/reddit.com{random.choice(urls)}/new"
+                if not urls:
+                    raise ValueError(f"No subreddits found for keyword: {keyword}")
+                result = f"https://reddit.com{random.choice(urls)}/new"
                 return result
+    except Exception as e:
+        logging.error(f"Error finding subreddit for keyword '{keyword}': {e}")
+        raise
     finally:
         await session.close()
+
 
 # Function to generate a URL for scraping
 async def generate_url(autonomous_subreddit_choice=0.35, keyword: str = "BTC"):
@@ -565,6 +572,7 @@ async def scrap_post(url: str) -> AsyncGenerator[Item, None]:
                     logging.exception(f"An error occurred on {_url}")
     finally:
         await session.close()
+
 
 # Function to split a camel case string into words
 def split_strings_subreddit_name(input_string):
