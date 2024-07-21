@@ -422,7 +422,7 @@ subreddits_top_1000 = [
 
 def load_cookies(directory_path):
     for filename in os.listdir(directory_path):
-        if filename.endswith(".json"):
+        if filename.startswith("cookies") and filename.endswith(".json"):
             file_path = os.path.join(directory_path, filename)
             try:
                 with open(file_path, 'r') as file:
@@ -435,7 +435,7 @@ def load_cookies(directory_path):
                 logging.error(f"Failed to decode JSON from file {file_path}: {e}")
             except Exception as e:
                 logging.error(f"An error occurred while loading cookies from file {file_path}: {e}")
-    raise FileNotFoundError("No valid .json file found in the specified directory")
+    raise FileNotFoundError("No valid cookies .json file found in the specified directory")
 
 
 async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
