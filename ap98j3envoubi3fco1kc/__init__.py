@@ -423,7 +423,7 @@ subreddits_top_1000 = [
 
 
 async def update_rate_limit(ip_data, reset_time_seconds, remaining_requests):
-    ip_data["reset_time"] = datetime.now() + timedelta(seconds=reset_time_seconds)
+    ip_data["reset_time"] = datett.now() + timedelta(seconds=reset_time_seconds)
     ip_data["remaining_requests"] = remaining_requests
 
 # Function to find and load cookies from the JSON file in /exorde/
