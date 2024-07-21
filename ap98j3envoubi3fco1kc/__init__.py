@@ -508,7 +508,8 @@ def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
 # Function to format a timestamp
 def format_timestamp(timestamp):
     dt = datett.fromtimestamp(timestamp, timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    formatted_timestamp = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return formatted_timestamp
 
 # Function to extract the subreddit name from a URL
 def extract_subreddit_name(input_string):
