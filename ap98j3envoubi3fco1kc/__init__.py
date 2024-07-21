@@ -1,23 +1,16 @@
-import os
 import random
 import aiohttp
 import asyncio
-
-
-from aiohttp import ClientSession, web
-
-
+import json
 from lxml import html
 from typing import AsyncGenerator
 import time
-from datetime import datetime as datett, timedelta
+from datetime import datetime as datett
 from datetime import timezone
 import hashlib
 import logging
 from lxml.html import fromstring
 import re
-import json
-from wordsegment import load, segment
 from exorde_data import (
     Item,
     Content,
@@ -28,13 +21,16 @@ from exorde_data import (
     Domain,
 )
 
+import hashlib
+from wordsegment import load, segment
 load()
 
 USER_AGENT_LIST = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
 ]
 
-# Define global variables
+global MAX_EXPIRATION_SECONDS
+global SKIP_POST_PROBABILITY
 MAX_EXPIRATION_SECONDS = 80000
 SKIP_POST_PROBABILITY = 0.1
 BASE_TIMEOUT = 30
@@ -421,108 +417,82 @@ subreddits_top_1000 = [
     "r/Calgary","r/furry","r/csMajors","r/Bedbugs","r/DBZDokkanBattle","r/mumbai","r/popheadscirclejerk","r/marvelmemes","r/Egypt","r/Topster",
 ]
 
+def load_cookies(file_path):
+    with open(file_path, 'r') as file:
+        cookies = json.load(file)
+    return {cookie['name']: cookie['value'] for cookie in cookies}
 
-async def update_rate_limit(ip_data, reset_time_seconds, remaining_requests):
-    ip_data["reset_time"] = datett.now() + timedelta(seconds=reset_time_seconds)
-    ip_data["remaining_requests"] = remaining_requests
-
-# Function to find and load cookies from the JSON file in /exorde/
-def load_cookies_from_json() -> dict:
-    json_files = [file for file in os.listdir('/exorde/') if file.endswith('.json')]
-    if not json_files:
-        raise FileNotFoundError("No JSON cookie files found in /exorde/ directory.")
-    
-    cookies_file = json_files[0]  # Assuming there is only one cookies file
-    logging.info(f"Loading cookies from {cookies_file}")
-    
-    with open(f'/exorde/{cookies_file}', 'r') as file:
-        try:
-            cookies_list = json.load(file)
-            if not isinstance(cookies_list, list):
-                raise ValueError("Cookies JSON is not a list")
-
-            # Ensure each item in cookies_list is a dictionary
-            for cookie in cookies_list:
-                if not isinstance(cookie, dict):
-                    raise ValueError("Each cookie should be a dictionary")
-
-            # Convert cookies_list to the format aiohttp expects
-            cookies = {cookie['name']: cookie['value'] for cookie in cookies_list}
-            return cookies
-        except json.JSONDecodeError as e:
-            logging.error(f"Error decoding JSON from {cookies_file}: {e}")
-            raise
-        except KeyError as e:
-            logging.error(f"Missing expected key in cookies JSON: {e}")
-            raise
-        except ValueError as e:
-            logging.error(f"Error processing cookies JSON: {e}")
-            raise
-
-
-# Function to find a random subreddit URL based on a keyword
 async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
-    logging.info(f"[Reddit] Searching for subreddits with keyword: {keyword}")
-    session = None
+    """
+    Generate a subreddit URL using the search tool with `keyword`.
+    It randomly chooses one of the resulting subreddit.
+    """
+    logging.info("[Reddit] generating subreddit target URL.")
     try:
-        cookies = load_cookies_from_json()
-        session = aiohttp.ClientSession(cookies=cookies)
-        async with session.get(
-            f"https://www.reddit.com/search/?q={keyword}&type=sr",
-            headers={"User-Agent": random.choice(USER_AGENT_LIST)},
-            timeout=BASE_TIMEOUT
-        ) as response:
-            html_content = await response.text()
-            tree = html.fromstring(html_content)
-            urls = [
-                url for url in tree.xpath('//a[contains(@href, "/r/")]//@href')
-                if not "/r/popular" in url
-            ]
-            if not urls:
-                raise ValueError(f"No subreddits found for keyword: {keyword}")
-            result = f"https://reddit.com{random.choice(urls)}/new"
-            return result
-    except Exception as e:
-        logging.error(f"Error finding subreddit for keyword '{keyword}': {e}")
-        raise
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://www.reddit.com/search/?q={keyword}&type=sr",
+                headers={"User-Agent": random.choice(USER_AGENT_LIST)},              
+                timeout = BASE_TIMEOUT
+            ) as response:
+                html_content = await response.text()
+                tree = html.fromstring(html_content)
+                urls = [
+                    url
+                    for url in tree.xpath('//a[contains(@href, "/r/")]//@href')
+                    if not "/r/popular" in url
+                ]
+                result = f"https:/reddit.com{random.choice(urls)}/new"
+                return result
     finally:
-        if session:
-            await session.close()
+        await session.close()
 
 
-# Function to generate a URL for scraping
 async def generate_url(autonomous_subreddit_choice=0.35, keyword: str = "BTC"):
     random_value = random.random()
     if random_value < autonomous_subreddit_choice:
+        logging.info("[Reddit] Exploration mode!")  
         return await find_random_subreddit_for_keyword(keyword)
     else:
-        selected_subreddit = random.choice(subreddits_top_225) if random.random() < 0.5 else random.choice(subreddits_top_1000)
-        return f"https://reddit.com/{selected_subreddit}"
+        if random.random() < 0.5:     
+            logging.info("[Reddit] Top 225 Subreddits mode!")       
+            selected_subreddit_ = "https://reddit.com/" + random.choice(subreddits_top_225)
+        else:            
+            logging.info("[Reddit] Top 1000 Subreddits mode!")
+            selected_subreddit_ = "https://reddit.com/" + random.choice(subreddits_top_1000)
+        
+        return selected_subreddit_
 
-# Function to check if a timestamp is within a certain timeframe
+
 def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
-    current_timestamp = int(time.time())
-    elapsed_time = current_timestamp - int(input_timestamp)
-    return elapsed_time <= timeframe_sec
+    input_timestamp = int(input_timestamp)
+    current_timestamp = int(time.time())  # Get the current UNIX timestamp
+    elapsed_time = current_timestamp - input_timestamp
 
-# Function to format a timestamp
+    if elapsed_time <= timeframe_sec:
+        return True
+    else:
+        return False
+
+
 def format_timestamp(timestamp):
     dt = datett.fromtimestamp(timestamp, timezone.utc)
     formatted_timestamp = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     return formatted_timestamp
 
-# Function to extract the subreddit name from a URL
 def extract_subreddit_name(input_string):
     match = re.search(r'r/([^/]+)', input_string)
-    return match.group(1) if match else None
+    if match:
+        return match.group(1)
+    return None
 
-# Function to scrape a Reddit post
-async def scrap_post(url: str) -> AsyncGenerator[Item, None]:
+async def scrap_post(url: str, session_cookies) -> AsyncGenerator[Item, None]:
     resolvers = {}
 
     async def post(data) -> AsyncGenerator[Item, None]:
+        """t3"""
         content = data["data"]
-        item = Item(
+        item_ = Item(
             content=Content(content["selftext"]),
             author=Author(
                 hashlib.sha1(
@@ -536,12 +506,15 @@ async def scrap_post(url: str) -> AsyncGenerator[Item, None]:
             domain=Domain("reddit.com"),
             url=Url("https://reddit.com" + content["url"]),
         )
-        if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
-            yield item
+        if is_within_timeframe_seconds(
+            content["created_utc"], MAX_EXPIRATION_SECONDS
+        ):
+            yield item_
 
     async def comment(data) -> AsyncGenerator[Item, None]:
+        """t1"""
         content = data["data"]
-        item = Item(
+        item_ = Item(
             content=Content(content["body"]),
             author=Author(
                 hashlib.sha1(
@@ -554,8 +527,10 @@ async def scrap_post(url: str) -> AsyncGenerator[Item, None]:
             domain=Domain("reddit.com"),
             url=Url("https://reddit.com" + content["permalink"]),
         )
-        if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
-            yield item
+        if is_within_timeframe_seconds(
+            content["created_utc"], MAX_EXPIRATION_SECONDS
+        ):
+            yield item_
 
     async def more(__data__):
         for __item__ in []:
@@ -579,60 +554,59 @@ async def scrap_post(url: str) -> AsyncGenerator[Item, None]:
                 yield item
 
     resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
-
     try:
-        async with aiohttp.ClientSession(cookies=load_cookies_from_json()) as session:
+        async with aiohttp.ClientSession(cookies=session_cookies) as session:
             _url = url + ".json"
             logging.info(f"[Reddit] Scraping - getting {_url}")
-            async with session.get(_url,
-                headers={"User-Agent": random.choice(USER_AGENT_LIST)},
+            async with session.get(_url, 
+                headers={"User-Agent": random.choice(USER_AGENT_LIST)},     
                 timeout=BASE_TIMEOUT) as response:
                 response = await response.json()
                 [_post, comments] = response
-
                 try:
                     async for item in kind(_post):
-                        yield item
+                        yield (item)
                 except GeneratorExit:
                     logging.info("[Reddit] Scraper generator exit...")
                     return
                 except:
-                    logging.exception(f"An error occurred on {_url}")
+                    logging.exception(f"An error occured on {_url}")
 
                 try:
                     for result in comments["data"]["children"]:
                         async for item in kind(result):
-                            yield item
+                            yield (item)
                 except GeneratorExit:
                     logging.info("[Reddit] Scraper generator exit...")
                     return
                 except:
-                    logging.exception(f"An error occurred on {_url}")
+                    logging.exception(f"An error occured on {_url}")
     finally:
         await session.close()
 
 
-# Function to split a camel case string into words
 def split_strings_subreddit_name(input_string):
     words = []
     start = 0
+
     for i in range(1, len(input_string)):
         if input_string[i].isupper():
             words.append(input_string[start:i])
             start = i
+
     words.append(input_string[start:])
     return ' '.join(words)
 
-# Function to scrape a subreddit with new layout
-async def scrap_subreddit_new_layout(subreddit_url: str) -> AsyncGenerator[Item, None]:
+
+async def scrap_subreddit_new_layout(subreddit_url: str, session_cookies) -> AsyncGenerator[Item, None]:
     try:
-        async with aiohttp.ClientSession(cookies=load_cookies_from_json()) as session:
+        async with aiohttp.ClientSession(cookies=session_cookies) as session:
             url_to_fetch = subreddit_url
-            logging.info("[Reddit] [NEW LAYOUT MODE] Opening: %s", url_to_fetch)
-            async with session.get(url_to_fetch,
-                headers={"User-Agent": random.choice(USER_AGENT_LIST)},
+            logging.info("[Reddit] [NEW LAYOUT MODE] Opening: %s",url_to_fetch)
+            async with session.get(url_to_fetch, 
+                headers={"User-Agent": random.choice(USER_AGENT_LIST)},     
                 timeout=BASE_TIMEOUT) as response:
-                html_content = await response.text()
+                html_content = await response.text()                    
                 html_tree = fromstring(html_content)
                 for post in html_tree.xpath("//shreddit-post/@permalink"):
                     url = post
@@ -642,14 +616,14 @@ async def scrap_subreddit_new_layout(subreddit_url: str) -> AsyncGenerator[Item,
                     try:
                         if "https" not in url:
                             url = f"https://reddit.com{url}"
-                        async for item in scrap_post(url):
+                        async for item in scrap_post(url, session_cookies):
                             yield item
                     except Exception:
                         pass
     except:
         await session.close()
 
-# Function to find permalinks in JSON data
+
 def find_permalinks(data):
     if isinstance(data, dict):
         if 'permalink' in data:
@@ -660,56 +634,43 @@ def find_permalinks(data):
         for item in data:
             yield from find_permalinks(item)
 
-# Function to scrape a subreddit using JSON
-async def scrap_subreddit_json(subreddit_url: str) -> AsyncGenerator[Item, None]:
-    session = None
+async def scrap_subreddit_json(subreddit_url: str, session_cookies) -> AsyncGenerator[Item, None]:
     try:
-        cookies = load_cookies_from_json()
-        session = ClientSession(cookies=cookies)
-        url_to_fetch = subreddit_url
-        if random.random() < 0.75:
-            url_to_fetch = url_to_fetch + "/new"
-        url_to_fetch = url_to_fetch + "/.json"
-        if url_to_fetch.endswith("/new/new/.json"):
-            url_to_fetch = url_to_fetch.replace("/new/new/.json", "/new.json")
-        
-        logging.info("[Reddit] [JSON MODE] opening: %s", url_to_fetch)
-        await asyncio.sleep(1)
-        async with session.get(url_to_fetch,
-            headers={"User-Agent": random.choice(USER_AGENT_LIST)},
-            timeout=BASE_TIMEOUT) as response:
-            if response.status == 429:
-                reset_time = int(response.headers.get('x-ratelimit-reset', 60))  # Default to 60 if header is missing
-                await update_rate_limit(ip_data, reset_time, 0)
-                await asyncio.sleep(reset_time + 2)  # Sleep for reset time + 2 seconds
-                return web.json_response({"message": "Rate limited by Reddit. Please try again later."}, status=429)
-            elif 'x-ratelimit-remaining' in response.headers:
-                remaining = float(response.headers['x-ratelimit-remaining'])
-                reset = int(response.headers['x-ratelimit-reset'])
-                if remaining < 10:  # Arbitrary threshold for remaining requests
-                    await update_rate_limit(ip_data, reset, remaining)
-                    return web.json_response({"message": "Approaching rate limit. Please try again later."}, status=429)
-                ip_data["remaining_requests"] = remaining
-                ip_data["reset_time"] = datetime.now() + timedelta(seconds=reset)
-            data = await response.json()
-            permalinks = list(find_permalinks(data))
-            for permalink in permalinks:
-                try:
-                    if random.random() < SKIP_POST_PROBABILITY:
-                        url = permalink
-                        if "https" not in url:
-                            url = f"https://reddit.com{url}"
-                        async for item in scrap_post(url):
-                            yield item
-                except Exception as e:
-                    logging.exception(f"[Reddit] [JSON MODE] Error detected")
-    except Exception as e:
-        logging.error(f"Error scraping subreddit JSON: {e}")
-    finally:
-        if session:
-            await session.close()
+        async with aiohttp.ClientSession(cookies=session_cookies) as session:
+            url_to_fetch = subreddit_url
+            if random.random() < 0.75:
+                url_to_fetch = url_to_fetch + "/new"
+            url_to_fetch = url_to_fetch + "/.json"
+                
+            if url_to_fetch.endswith("/new/new/.json"):
+                url_to_fetch = url_to_fetch.replace("/new/new/.json", "/new.json")
+            logging.info("[Reddit] [JSON MODE] opening: %s",url_to_fetch)
+            await asyncio.sleep(1)
+            async with session.get(url_to_fetch, 
+                headers={"User-Agent": random.choice(USER_AGENT_LIST)},     
+                timeout=BASE_TIMEOUT) as response:
+                # Parse JSON response
+                data = await response.json()
+                # Find all "permalink" values
+                                
+                permalinks = list(find_permalinks(data))
 
-# Default values for query parameters
+                for permalink in permalinks:
+                    try:
+                        if random.random() < SKIP_POST_PROBABILITY:
+                            url = permalink
+                            if "https" not in url:
+                                url = f"https://reddit.com{url}"
+                            async for item in scrap_post(url, session_cookies):
+                                yield item
+                    except Exception as e:
+                        logging.exception(f"[Reddit] [JSON MODE] Error detected")
+
+    except:
+        await session.close()
+
+
+
 DEFAULT_OLDNESS_SECONDS = 36000
 DEFAULT_MAXIMUM_ITEMS = 25
 DEFAULT_MIN_POST_LENGTH = 5
@@ -717,16 +678,52 @@ DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3
 DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
 
-# Function to read and return query parameters with defaults
 def read_parameters(parameters):
+    # Check if parameters is not empty or None
     if parameters and isinstance(parameters, dict):
-        max_oldness_seconds = parameters.get("max_oldness_seconds", DEFAULT_OLDNESS_SECONDS)
-        maximum_items_to_collect = parameters.get("maximum_items_to_collect", DEFAULT_MAXIMUM_ITEMS)
-        min_post_length = parameters.get("min_post_length", DEFAULT_MIN_POST_LENGTH)
-        nb_subreddit_attempts = parameters.get("nb_subreddit_attempts", DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS)
-        new_layout_scraping_weight = parameters.get("new_layout_scraping_weight", DEFAULT_LAYOUT_SCRAPING_WEIGHT)
-        skip_post_probability = parameters.get("skip_post_probability", DEFAULT_SKIP_PROBA)
+        try:
+            max_oldness_seconds = parameters.get(
+                "max_oldness_seconds", DEFAULT_OLDNESS_SECONDS
+            )
+        except KeyError:
+            max_oldness_seconds = DEFAULT_OLDNESS_SECONDS
+
+        try:
+            maximum_items_to_collect = parameters.get(
+                "maximum_items_to_collect", DEFAULT_MAXIMUM_ITEMS
+            )
+        except KeyError:
+            maximum_items_to_collect = DEFAULT_MAXIMUM_ITEMS
+
+        try:
+            min_post_length = parameters.get(
+                "min_post_length", DEFAULT_MIN_POST_LENGTH
+            )
+        except KeyError:
+            min_post_length = DEFAULT_MIN_POST_LENGTH
+
+        try:
+            nb_subreddit_attempts = parameters.get(
+                "nb_subreddit_attempts", DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS
+            )
+        except KeyError:
+            nb_subreddit_attempts = DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS
+
+        try:
+            new_layout_scraping_weight = parameters.get(
+                "new_layout_scraping_weight", DEFAULT_LAYOUT_SCRAPING_WEIGHT
+            )
+        except KeyError:
+            new_layout_scraping_weight = DEFAULT_LAYOUT_SCRAPING_WEIGHT
+
+        try:
+            skip_post_probability = parameters.get(
+                "skip_post_probability", DEFAULT_SKIP_PROBA
+            )
+        except KeyError:
+            skip_post_probability = DEFAULT_SKIP_PROBA
     else:
+        # Assign default values if parameters is empty or None
         max_oldness_seconds = DEFAULT_OLDNESS_SECONDS
         maximum_items_to_collect = DEFAULT_MAXIMUM_ITEMS
         min_post_length = DEFAULT_MIN_POST_LENGTH
@@ -736,36 +733,39 @@ def read_parameters(parameters):
 
     return max_oldness_seconds, maximum_items_to_collect, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, skip_post_probability
 
-# Function to correct a Reddit URL
 def correct_reddit_url(url):
     parts = url.split("https://reddit.comhttps://", 1)
-    return "https://" + parts[1] if len(parts) == 2 else url
+    if len(parts) == 2:
+        corrected_url = "https://" + parts[1]
+        return corrected_url
+    return url
 
-# Function to post-process an item
-def post_process_item(item):
+def post_process_item(item):    
     try:
-        if len(item['content']) > 10:
+        if len(item['content'])>10:
             subreddit_name = extract_subreddit_name(item["url"])
-            if subreddit_name:
-                segmented_subreddit_strs = segment(subreddit_name)
-                segmented_subreddit_name = " ".join(segmented_subreddit_strs)
-                item["content"] += f". - {segmented_subreddit_name} ,{subreddit_name}"
+            if subreddit_name is None:
+                return item
+            segmented_subreddit_strs = segment(subreddit_name)
+            segmented_subreddit_name = " ".join(segmented_subreddit_strs)
+            item["content"] = item["content"] + ". - " + segmented_subreddit_name + " ," + subreddit_name
     except Exception as e:
         logging.exception(f"[Reddit post_process_item] Word segmentation failed: {e}, ignoring...")
     try:
         item["url"] = correct_reddit_url(item["url"])
     except:
-        logging.warning(f"[Reddit] failed to correct the URL of item %s", item["url"])
+        logging.warning(f"[Reddit] failed to correct the URL of item %s",item["url"])
     return item
 
-# Function to check if an item is valid
 def is_valid_item(item, min_post_length):
-    return len(item["content"]) >= min_post_length \
-        and not item["url"].startswith("https://reddit.comhttps:") \
-        and "reddit.com" in item["url"] \
-        and item["content"] != "[deleted]"
+    if len(item["content"])<min_post_length \
+    or item["url"].startswith("https://reddit.comhttps:")  \
+    or not ("reddit.com" in item["url"]) \
+    or item["content"] == "[deleted]":
+        return False
+    else:
+        return True
 
-# Main query function to scrape Reddit
 async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     global MAX_EXPIRATION_SECONDS, SKIP_POST_PROBABILITY
     (
@@ -776,24 +776,26 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
         new_layout_scraping_weight,
         SKIP_POST_PROBABILITY
     ) = read_parameters(parameters)
-
     logging.info(f"[Reddit] Input parameters: {parameters}")
     MAX_EXPIRATION_SECONDS = max_oldness_seconds
-    yielded_items = 0
+    yielded_items = 0  # Counter for the number of yielded items
+
+    cookies = load_cookies("/exorde/1.json")
 
     await asyncio.sleep(random.uniform(3, 15))
     for i in range(nb_subreddit_attempts):
         await asyncio.sleep(random.uniform(1, i))
         url = await generate_url(**parameters["url_parameters"])
+        # if url ends with "/new/new/.json", replace it with "/new.json"
         if url.endswith("/new/new/.json"):
             url = url.replace("/new/new/.json", "/new.json")
         logging.info(f"[Reddit] Attempt {(i+1)}/{nb_subreddit_attempts} Scraping {url} with max oldness of {max_oldness_seconds}")
-
         if "reddit.com" not in url:
             raise ValueError(f"Not a Reddit URL {url}")
+        url_parameters = url.split("reddit.com")[1].split("/")[1:]
+        if "comments" in url_parameters:
+            async for result in scrap_post(url, cookies):
 
-        if "comments" in url.split("reddit.com")[1].split("/")[1:]:
-            async for result in scrap_post(url):
                 yielded_items += 1
                 result = post_process_item(result)
                 if is_valid_item(result, min_post_length):
@@ -802,10 +804,12 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
                 if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
                     break
         else:
-            selected_function = scrap_subreddit_json if random.random() >= new_layout_scraping_weight else scrap_subreddit_new_layout
-            async for result in selected_function(url):
+            selected_function = scrap_subreddit_json
+            if random.random() < new_layout_scraping_weight:
+                selected_function = scrap_subreddit_new_layout
+            async for result in selected_function(url, cookies):
                 yielded_items += 1
-                result = post_process_item(result)
+                result = post_process_item(result)           
                 if is_valid_item(result, min_post_length):
                     logging.info(f"[Reddit] Found Reddit comment: {result}")
                     yield result
