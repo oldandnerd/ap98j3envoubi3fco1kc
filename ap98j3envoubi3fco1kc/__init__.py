@@ -152,9 +152,9 @@ async def handle_rate_limit(response, session, ip, port, tcp_connector):
     if response.status == 429:
         logging.warning(f"[Reddit] Rate limit exceeded. Requesting new IP.")
         await report_rate_limit(ip, port)  # Report the rate limit
-        new_session, new_tcp_connector = await get_new_ip_and_update_session(session)
-        return new_session, new_tcp_connector
-    return session, tcp_connector
+        new_session, new_tcp_connector, new_ip, new_port = await get_new_ip_and_update_session(session)
+        return new_session, new_tcp_connector, new_ip, new_port
+    return session, tcp_connector, ip, port
 
 async def fetch_with_retry(session, url, headers, ip, port, tcp_connector, retries=5, backoff_factor=0.3):
     for attempt in range(retries):
@@ -170,7 +170,7 @@ async def fetch_with_retry(session, url, headers, ip, port, tcp_connector, retri
                 if response.status == 429:
                     logging.warning(f"[Reddit] ({ip}) Rate limit exceeded. Requesting new IP.")
                     await report_rate_limit(ip, port)  # Report the rate limit
-                    session, tcp_connector = await get_new_ip_and_update_session(session)
+                    session, tcp_connector, ip, port = await get_new_ip_and_update_session(session)
                     continue  # Retry immediately with the new IP
                 response.raise_for_status()
                 return await response.json()
@@ -181,6 +181,7 @@ async def fetch_with_retry(session, url, headers, ip, port, tcp_connector, retri
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     logging.error(f"[Reddit] ({ip}) Failed to fetch {url} after {retries} attempts")
     return None
+
 
 async def scrap_post(session: ClientSession, ip: str, port: str, url: str, count: int, limit: int, tcp_connector) -> AsyncGenerator[Item, None]:
     if count >= limit:
@@ -473,7 +474,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     sessions = [await create_session_with_proxy(proxy['ip'], proxy['port'], proxy['cookies']) for proxy in proxies]
 
     try:
-        scrape_tasks = [scrape_with_session(session, ip, proxy['port'], max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, tcp_connector) for (session, tcp_connector), proxy in zip(sessions, proxies)]
+        scrape_tasks = [scrape_with_session(session, proxy['ip'], proxy['port'], max_oldness_seconds, MAXIMUM_ITEMS_TO_COLLECT, min_post_length, nb_subreddit_attempts, new_layout_scraping_weight, tcp_connector) for (session, tcp_connector), proxy in zip(sessions, proxies)]
         results = await asyncio.gather(*scrape_tasks)
 
         for items in results:
