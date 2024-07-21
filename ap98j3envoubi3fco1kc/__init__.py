@@ -226,29 +226,74 @@ async def scrap_post(session: ClientSession, ip: str, port: str, url: str, count
                 yield item_
                 count += 1
 
-    async def kind(data, depth=0) -> AsyncGenerator[Item, None]:
+    async def listing(data) -> AsyncGenerator[Item, None]:
+        nonlocal count
+        for item_data in data["data"]["children"]:
+            if count >= limit:
+                break
+            async for item in kind(item_data):
+                if count < limit:
+                    yield item
+                    count += 1
+
+    resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
+    _url = url + ".json"
+    logging.info(f"[Reddit] ({ip}) Scraping - getting {_url}")
+
+    try:
+        response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, ip=ip, port=port, tcp_connector=tcp_connector)
+        if not response_json:
+            return
+        [_post, comments] = response_json
+        try:
+            async for item in kind(_post):
+                if count < limit:
+                    yield item
+                    count += 1
+        except GeneratorExit:
+            logging.info(f"[Reddit] ({ip}) Scraper generator exit...")
+            return
+        except Exception as e:
+            logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
+
+        try:
+            for result in comments["data"]["children"]:
+                async for item in kind(result):
+                    if count < limit:
+                        yield item
+                        count += 1
+        except GeneratorExit:
+            logging.info(f"[Reddit] ({ip}) Scraper generator exit...")
+            return
+        except Exception as e:
+            logging.exception(f"[Reddit] ({ip}) An error occurred on {_url}: {e}")
+    except aiohttp.ClientError as e:
+        logging.error(f"[Reddit] ({ip}) Failed to fetch {_url}: {e}")
+
+    async def more(data):
+        """Resolver for 'more' kind that simply yields an empty item."""
+        logging.warning(f"[Reddit] ({ip}) Handling 'more' object by yielding an empty item.")
+        for _ in []:
+            yield Item()
+
+    async def kind(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         if count >= limit:
-            return
-        if depth > 10:  # Safeguard against deep recursion
-            logging.error(f"Maximum recursion depth exceeded for kind: {data['kind']}")
             return
         if not isinstance(data, dict):
             return
         resolver = resolvers.get(data["kind"], None)
         if not resolver:
-            raise NotImplementedError(f"{data['kind']} is not implemented")
+            logging.warning(f"[Reddit] ({ip}) {data['kind']} is not implemented. Skipping...")
+            return
         try:
             async for item in resolver(data):
                 if count < limit:
                     yield item
                     count += 1
-        except RecursionError as err:
-            logging.error(f"Recursion error detected: {err}")
-            return
         except Exception as err:
-            logging.error(f"An error occurred in kind resolver: {err}")
             raise err
+
 
     resolvers = {"Listing": kind, "t1": comment, "t3": post}
 
