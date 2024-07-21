@@ -441,7 +441,7 @@ def load_cookies(directory_path):
 async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
     """
     Generate a subreddit URL using the search tool with `keyword`.
-    It randomly chooses one of the resulting subreddit.
+    It randomly chooses one of the resulting subreddits.
     """
     logging.info("[Reddit] generating subreddit target URL.")
     try:
@@ -449,7 +449,7 @@ async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
             async with session.get(
                 f"https://www.reddit.com/search/?q={keyword}&type=sr",
                 headers={"User-Agent": random.choice(USER_AGENT_LIST)},              
-                timeout = BASE_TIMEOUT
+                timeout=BASE_TIMEOUT
             ) as response:
                 html_content = await response.text()
                 tree = html.fromstring(html_content)
@@ -458,8 +458,12 @@ async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
                     for url in tree.xpath('//a[contains(@href, "/r/")]//@href')
                     if not "/r/popular" in url
                 ]
-                result = f"https:/reddit.com{random.choice(urls)}/new"
-                return result
+                if urls:
+                    result = f"https://reddit.com{random.choice(urls)}/new"
+                    return result
+                else:
+                    logging.warning(f"No subreddits found for keyword: {keyword}")
+                    return None
     finally:
         await session.close()
 
@@ -468,7 +472,12 @@ async def generate_url(autonomous_subreddit_choice=0.35, keyword: str = "BTC"):
     random_value = random.random()
     if random_value < autonomous_subreddit_choice:
         logging.info("[Reddit] Exploration mode!")  
-        return await find_random_subreddit_for_keyword(keyword)
+        result = await find_random_subreddit_for_keyword(keyword)
+        if result:
+            return result
+        else:
+            logging.info("[Reddit] Defaulting to top subreddits list due to no search results.")
+            return await generate_url(autonomous_subreddit_choice=0.0)  # Retry without exploration mode
     else:
         if random.random() < 0.5:     
             logging.info("[Reddit] Top 225 Subreddits mode!")       
@@ -478,6 +487,7 @@ async def generate_url(autonomous_subreddit_choice=0.35, keyword: str = "BTC"):
             selected_subreddit_ = "https://reddit.com/" + random.choice(subreddits_top_1000)
         
         return selected_subreddit_
+
 
 
 def is_within_timeframe_seconds(input_timestamp, timeframe_sec):
@@ -805,6 +815,9 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     for i in range(nb_subreddit_attempts):
         await asyncio.sleep(random.uniform(1, i))
         url = await generate_url(**parameters["url_parameters"])
+        if not url:
+            continue  # Skip this iteration if no URL was generated
+
         # if url ends with "/new/new/.json", replace it with "/new.json"
         if url.endswith("/new/new/.json"):
             url = url.replace("/new/new/.json", "/new.json")
