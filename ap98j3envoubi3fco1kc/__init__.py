@@ -448,7 +448,7 @@ async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"https://www.reddit.com/search/?q={keyword}&type=sr",
-                headers={"User-Agent": random.choice(USER_AGENT_LIST)},              
+                headers={"User-Agent": random.choice(USER_AGENT_LIST)},
                 timeout=BASE_TIMEOUT
             ) as response:
                 html_content = await response.text()
@@ -456,17 +456,16 @@ async def find_random_subreddit_for_keyword(keyword: str = "BTC"):
                 urls = [
                     url
                     for url in tree.xpath('//a[contains(@href, "/r/")]//@href')
-                    if not "/r/popular" in url
+                    if not "/r/popular" in url and "/r/" in url
                 ]
                 if urls:
-                    result = f"https://reddit.com{random.choice(urls)}/new"
-                    return result
+                    subreddit_url = f"https://www.reddit.com{random.choice(urls)}"
+                    return subreddit_url
                 else:
                     logging.warning(f"No subreddits found for keyword: {keyword}")
                     return None
     finally:
         await session.close()
-
 
 async def generate_url(autonomous_subreddit_choice=0.35, keyword: str = "BTC"):
     random_value = random.random()
@@ -481,10 +480,10 @@ async def generate_url(autonomous_subreddit_choice=0.35, keyword: str = "BTC"):
     else:
         if random.random() < 0.5:     
             logging.info("[Reddit] Top 225 Subreddits mode!")       
-            selected_subreddit_ = "https://reddit.com/" + random.choice(subreddits_top_225)
+            selected_subreddit_ = "https://www.reddit.com/" + random.choice(subreddits_top_225)
         else:            
             logging.info("[Reddit] Top 1000 Subreddits mode!")
-            selected_subreddit_ = "https://reddit.com/" + random.choice(subreddits_top_1000)
+            selected_subreddit_ = "https://www.reddit.com/" + random.choice(subreddits_top_1000)
         
         return selected_subreddit_
 
@@ -587,26 +586,29 @@ async def scrap_post(url: str, session_cookies) -> AsyncGenerator[Item, None]:
             async with session.get(_url, 
                 headers={"User-Agent": random.choice(USER_AGENT_LIST)},     
                 timeout=BASE_TIMEOUT) as response:
-                response = await response.json()
-                [_post, comments] = response
-                try:
-                    async for item in kind(_post):
-                        yield (item)
-                except GeneratorExit:
-                    logging.info("[Reddit] Scraper generator exit...")
-                    return
-                except:
-                    logging.exception(f"An error occured on {_url}")
-
-                try:
-                    for result in comments["data"]["children"]:
-                        async for item in kind(result):
+                if 'application/json' in response.headers.get('Content-Type', ''):
+                    response_json = await response.json()
+                    [_post, comments] = response_json
+                    try:
+                        async for item in kind(_post):
                             yield (item)
-                except GeneratorExit:
-                    logging.info("[Reddit] Scraper generator exit...")
-                    return
-                except:
-                    logging.exception(f"An error occured on {_url}")
+                    except GeneratorExit:
+                        logging.info("[Reddit] Scraper generator exit...")
+                        return
+                    except:
+                        logging.exception(f"An error occurred on {_url}")
+
+                    try:
+                        for result in comments["data"]["children"]:
+                            async for item in kind(result):
+                                yield (item)
+                    except GeneratorExit:
+                        logging.info("[Reddit] Scraper generator exit...")
+                        return
+                    except:
+                        logging.exception(f"An error occurred on {_url}")
+                else:
+                    logging.warning(f"Unexpected content type {response.headers.get('Content-Type')} for URL {_url}")
     finally:
         await session.close()
 
@@ -677,25 +679,27 @@ async def scrap_subreddit_json(subreddit_url: str, session_cookies) -> AsyncGene
             async with session.get(url_to_fetch, 
                 headers={"User-Agent": random.choice(USER_AGENT_LIST)},     
                 timeout=BASE_TIMEOUT) as response:
-                # Parse JSON response
-                data = await response.json()
-                # Find all "permalink" values
-                                
-                permalinks = list(find_permalinks(data))
+                if 'application/json' in response.headers.get('Content-Type', ''):
+                    data = await response.json()
+                    permalinks = list(find_permalinks(data))
 
-                for permalink in permalinks:
-                    try:
-                        if random.random() < SKIP_POST_PROBABILITY:
-                            url = permalink
-                            if "https" not in url:
-                                url = f"https://reddit.com{url}"
-                            async for item in scrap_post(url, session_cookies):
-                                yield item
-                    except Exception as e:
-                        logging.exception(f"[Reddit] [JSON MODE] Error detected")
-
-    except:
+                    for permalink in permalinks:
+                        try:
+                            if random.random() < SKIP_POST_PROBABILITY:
+                                url = permalink
+                                if "https" not in url:
+                                    url = f"https://reddit.com{url}"
+                                async for item in scrap_post(url, session_cookies):
+                                    yield item
+                        except Exception as e:
+                            logging.exception(f"[Reddit] [JSON MODE] Error detected")
+                else:
+                    logging.warning(f"Unexpected content type {response.headers.get('Content-Type')} for URL {url_to_fetch}")
+    except Exception as e:
+        logging.exception(f"An error occurred while scraping subreddit {subreddit_url}: {e}")
+    finally:
         await session.close()
+
 
 
 
