@@ -246,6 +246,80 @@ async def scrap_subreddit(session: ClientSession, subreddit_url: str, count: int
             except Exception as e:
                 logging.exception(f"[Reddit] Error scraping post {url}: {e}")
 
+async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
+    if count >= limit:
+        return
+
+    url_to_fetch = subreddit_url.rstrip('/') + "/.json"
+    if random.random() < 0.75:
+        url_to_fetch = subreddit_url.rstrip('/') + "/new/.json"
+
+    if url_to_fetch.endswith("/new/new/.json"):
+        url_to_fetch = url_to_fetch.replace("/new/new/.json", "/new.json")
+
+    logging.info(f"[Reddit] [JSON MODE] opening: {url_to_fetch}")
+    await asyncio.sleep(1)
+
+    try:
+        response_json = await fetch_with_retry(session, url_to_fetch, headers={"User-Agent": random.choice(USER_AGENT_LIST)})
+        if not response_json:
+            return
+
+        permalinks = list(find_permalinks(response_json))
+
+        for permalink in permalinks:
+            if count >= limit:
+                break
+            try:
+                if random.random() < SKIP_POST_PROBABILITY:
+                    continue
+                url = permalink
+                if "https" not in url:
+                    url = f"https://reddit.com{url}"
+                async for item in scrap_post(session, url, count, limit):
+                    if count < limit:
+                        yield item
+                        count += 1
+            except Exception as e:
+                logging.exception(f"[Reddit] [JSON MODE] Error detected: {e}")
+
+    except aiohttp.ClientError as e:
+        logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
+
+
+async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
+    if count >= limit:
+        return
+    async with session.get(f'{MANAGER_IP}/proxy?url={subreddit_url}', headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
+        html_content = await response.text()
+        html_tree = fromstring(html_content)
+        for post in html_tree.xpath("//shreddit-post/@permalink"):
+            if count >= limit:
+                break
+            url = post
+            if url.startswith("/r/"):
+                url = "https://www.reddit.com" + post
+            await asyncio.sleep(1)
+            try:
+                if "https" not in url:
+                    url = f"https://reddit.com{url}"
+                async for item in scrap_post(session, url, count, limit):
+                    if count < limit:
+                        yield item
+                        count += 1
+            except Exception as e:
+                logging.exception(f"[Reddit] Error scraping post {url}: {e}")
+
+def find_permalinks(data):
+    if isinstance(data, dict):
+        if 'permalink' in data:
+            yield data['permalink']
+        for key, value in data.items():
+            yield from find_permalinks(value)
+    elif isinstance(data, list):
+        for item in data:
+            yield from find_permalinks(item)
+            
 def post_process_item(item):
     try:
         if len(item['content']) > 10:
