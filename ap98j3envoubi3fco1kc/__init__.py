@@ -155,7 +155,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 subreddit_url = subreddit_url.rstrip('/') + '/.json'
             tasks.append(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length))
 
-        task_group = asyncio.gather(*tasks, return_exceptions=True)
+        task_group = asyncio.gather(*tasks, return_exceptions=False)
 
         try:
             await task_group
