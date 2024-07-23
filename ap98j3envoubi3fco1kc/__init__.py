@@ -165,11 +165,13 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 age_string = get_age_string(created_at_timestamp)
                 logging.info(f"Found comment {index} and it's {age_string}: {item}")
                 yield item
-        except GeneratorExit:
-            logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
+        except (GeneratorExit, asyncio.CancelledError):
+            logging.info("[Reddit] GeneratorExit/CancelledError caught, stopping the generator.")
             task_group.cancel()  # Cancel all ongoing tasks
-            await task_group  # Wait for tasks to be cancelled
-            raise  # Re-raise GeneratorExit to properly close the generator
+            await asyncio.gather(task_group, return_exceptions=True)  # Ensure all tasks are properly cancelled
+            raise  # Re-raise the exception to properly close the generator
+        except Exception as e:
+            logging.error(f"An error occurred: {e}")
 
 # Example usage:
 # parameters = {
