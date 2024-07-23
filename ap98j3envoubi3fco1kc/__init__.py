@@ -38,7 +38,7 @@ def is_within_timeframe_seconds(created_utc, max_oldness_seconds):
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
-    maximum_items_to_collect = min(parameters.get('maximum_items_to_collect'), 1000)
+    maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
     min_post_length = parameters.get('min_post_length')
 
     async with aiohttp.ClientSession() as session:
@@ -55,79 +55,59 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         logging.info(f"Fetched URL from proxy: {subreddit_url}")
 
-        after = None
+        response_json = await fetch_with_proxy(session, f"{subreddit_url}?limit=1000")
+
+        if not response_json:
+            logging.error("Response JSON is empty or invalid")
+            return
+
+        # Check the structure of the response JSON
+        if 'data' not in response_json or 'children' not in response_json['data']:
+            logging.error("Unexpected JSON structure")
+            return
+
+        posts = response_json['data']['children']
         items_collected = 0
 
-        while items_collected < maximum_items_to_collect:
-            params = {'limit': 100}
-            if after:
-                params['after'] = after
-
-            url = f"{subreddit_url}?limit=100"
-            if after:
-                url += f"&after={after}"
-
-            response_json = await fetch_with_proxy(session, url)
-
-            if not response_json:
-                logging.error("Response JSON is empty or invalid")
+        for post in posts:
+            if items_collected >= maximum_items_to_collect:
                 break
 
-            # Check the structure of the response JSON
-            if 'data' not in response_json or 'children' not in response_json['data']:
-                logging.error("Unexpected JSON structure")
-                break
+            post_kind = post.get('kind')
+            post_info = post.get('data', {})
 
-            posts = response_json['data']['children']
-            after = response_json['data'].get('after')
+            if post_kind == 't3':
+                post_title = post_info.get('title', '[no title]')
+                
+                comments = post_info.get('comments', {}).get('data', {}).get('children', [])
+                
+                for comment in comments:
+                    if items_collected >= maximum_items_to_collect:
+                        break
+                    if comment['kind'] == 't1':
+                        comment_data = comment['data']
+                        comment_content = comment_data.get('body', '[deleted]')
+                        comment_author = comment_data.get('author', '[unknown]')
+                        comment_created_at = comment_data['created_utc']
+                        comment_url = f"https://reddit.com{comment_data['permalink']}"
 
-            if not posts:
-                logging.info("No more posts to retrieve.")
-                break
+                        if (len(comment_content) >= min_post_length and
+                            is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
 
-            for post in posts:
-                if items_collected >= maximum_items_to_collect:
-                    break
+                            item = Item(
+                                content=Content(comment_content),
+                                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                                created_at=CreatedAt(format_timestamp(comment_created_at)),
+                                title=Title(post_title),
+                                domain=Domain("reddit.com"),
+                                url=Url(comment_url),
+                            )
 
-                post_kind = post.get('kind')
-                post_info = post.get('data', {})
-
-                if post_kind == 't3':
-                    post_title = post_info.get('title', '[no title]')
-                    
-                    comments = post_info.get('comments', {}).get('data', {}).get('children', [])
-                    
-                    for comment in comments:
-                        if items_collected >= maximum_items_to_collect:
-                            break
-                        if comment['kind'] == 't1':
-                            comment_data = comment['data']
-                            comment_content = comment_data.get('body', '[deleted]')
-                            comment_author = comment_data.get('author', '[unknown]')
-                            comment_created_at = comment_data['created_utc']
-                            comment_url = f"https://reddit.com{comment_data['permalink']}"
-
-                            if (len(comment_content) >= min_post_length and
-                                is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
-
-                                item = Item(
-                                    content=Content(comment_content),
-                                    author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                                    created_at=CreatedAt(format_timestamp(comment_created_at)),
-                                    title=Title(post_title),
-                                    domain=Domain("reddit.com"),
-                                    url=Url(comment_url),
-                                )
-
-                                logging.info("Comment found: %s", item)
-                                yield item
-                                items_collected += 1
-                            else:
-                                logging.info(f"Comment skipped due to length or timeframe: {comment_content}")
-
-            if not after:
-                logging.info("No more posts to fetch, 'after' is None.")
-                break
+                            logging.info("Comment found: %s", item)
+                            yield item
+                            items_collected += 1
+                        else:
+                            logging.info(f"Comment skipped due to length or timeframe: {comment_content}")
 
 # Example usage:
 # parameters = {
