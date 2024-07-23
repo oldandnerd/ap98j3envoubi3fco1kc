@@ -113,6 +113,10 @@ def split_strings_subreddit_name(input_string):
     return ' '.join(words)
 
 async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3):
+    if "comments" in url:  # <-- Check to skip comment URLs
+        logging.info(f"[Reddit] Skipping comment URL: {url}")
+        return None
+
     for attempt in range(retries):
         try:
             async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers, timeout=BASE_TIMEOUT) as response:
@@ -125,8 +129,13 @@ async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3)
     return None
 
 
+
 async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
+        return
+
+    if "comments" in url:  # <-- Skip comment URLs
+        logging.info(f"[Reddit] Skipping comment URL: {url}")
         return
 
     async def post(data) -> AsyncGenerator[Item, None]:
@@ -212,7 +221,8 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             raise err
 
     resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
-    _url = url + ".json"
+    
+    _url = url + ".json"  # <-- Appending .json to URL
     logging.info(f"[Reddit] Scraping - getting {_url}")
 
     try:
@@ -244,6 +254,8 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
+
+
 
 
 async def fetch_multiple_posts(session: ClientSession, urls: list, limit: int) -> AsyncGenerator[Item, None]:
@@ -334,7 +346,7 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
 
         for i in range(0, len(permalinks), limit):
             batch_permalinks = permalinks[i:i + limit]
-            full_urls = [f"https://reddit.com{permalink}" for permalink in batch_permalinks]
+            full_urls = [f"https://reddit.com{permalink}" for permalink in batch_permalinks if "comments" not in permalink]  # <-- Skip comment permalinks
             tasks = [collect_from_generator(scrap_post(session, url, count, limit)) for url in full_urls]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -346,9 +358,7 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
                         if count < limit:
                             yield item
                             count += 1
-
     except GeneratorExit:
-        logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_json()")
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
