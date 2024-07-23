@@ -156,7 +156,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         created_utc = content["created_utc"]
 
         if not is_within_timeframe_seconds(created_utc, MAX_EXPIRATION_SECONDS):
-            logging.info(f"[Reddit] Skipping old comment: {url}")
+            logging.info(f"[Reddit] Skipping old comment: {content['permalink']}")
             return
 
         item_ = Item(
@@ -173,9 +173,6 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             yield item_
             count += 1
 
-    async def more(data) -> AsyncGenerator[Item, None]:
-        for __item__ in []:
-            yield Item()
 
     async def listing(data) -> AsyncGenerator[Item, None]:
         nonlocal count
@@ -208,7 +205,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         except Exception as err:
             raise err
 
-    resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
+    resolvers = {"Listing": listing, "t1": comment, "t3": post}
     _url = url + ".json"
     logging.info(f"[Reddit] Scraping - getting {_url}")
 
