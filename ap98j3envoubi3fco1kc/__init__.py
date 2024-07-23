@@ -249,6 +249,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int, s
 
 
 
+
 async def scrap_subreddit(session: ClientSession, subreddit_url: str, count: int, limit: int, semaphore: asyncio.Semaphore) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
@@ -276,6 +277,7 @@ async def scrap_subreddit(session: ClientSession, subreddit_url: str, count: int
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
+
 
 
 
@@ -326,6 +328,7 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
 
 
 
+
 async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str, count: int, limit: int, semaphore: asyncio.Semaphore) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
@@ -353,6 +356,7 @@ async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str,
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
+
 
 
 
@@ -400,6 +404,7 @@ def correct_reddit_url(url):
     # Remove extra "r/" from URLs if present
     corrected_url = re.sub(r'(/r/){2,}', '/r/', url)
     return corrected_url
+
 
 MAX_CONCURRENT_REQUESTS = 20
 
