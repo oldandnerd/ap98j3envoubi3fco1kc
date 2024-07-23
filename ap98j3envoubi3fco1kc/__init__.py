@@ -1,4 +1,3 @@
-# BEST one so far working
 import random
 import aiohttp
 from aiohttp import ClientSession
@@ -238,35 +237,61 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
 
 
+async def fetch_multiple_posts(session: ClientSession, urls: list, limit: int) -> AsyncGenerator[Item, None]:
+    tasks = []
+    count = 0
 
-async def scrap_subreddit(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
+    for url in urls:
+        if count >= limit:
+            break
+        tasks.append(scrap_post(session, url, count, limit))
+    
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    for result in results:
+        if isinstance(result, Exception):
+            logging.exception(f"[Reddit] An error occurred: {result}")
+        else:
+            async for item in result:
+                if count < limit:
+                    yield item
+                    count += 1
+
+async def scrap_subreddit_parallel(session: ClientSession, subreddit_url: str, count: int, limit: int, batch_size: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
+
     try:
         async with session.get(f'{MANAGER_IP}/proxy?url={subreddit_url}', headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
             html_content = await response.text()
             html_tree = fromstring(html_content)
+            post_urls = []
+
             for post in html_tree.xpath("//shreddit-post/@permalink"):
                 if count >= limit:
                     break
                 url = post
                 if url.startswith("/r/"):
                     url = "https://www.reddit.com" + post
-                await asyncio.sleep(1)
-                try:
-                    if "https" not in url:
-                        url = f"https://reddit.com{url}"
-                    async for item in scrap_post(session, url, count, limit):
+                if "https" not in url:
+                    url = f"https://reddit.com{url}"
+                post_urls.append(url)
+
+                if len(post_urls) >= batch_size:
+                    async for item in fetch_multiple_posts(session, post_urls, limit):
                         if count < limit:
                             yield item
                             count += 1
-                except GeneratorExit:
-                    logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit() - post: {url}")
-                    return
-                except Exception as e:
-                    logging.exception(f"[Reddit] Error scraping post {url}: {e}")
+                    post_urls = []
+
+            if post_urls:
+                async for item in fetch_multiple_posts(session, post_urls, limit):
+                    if count < limit:
+                        yield item
+                        count += 1
+
     except GeneratorExit:
-        logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit()")
+        logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_parallel()")
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
@@ -320,7 +345,6 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
 
 
 
-
 async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
@@ -352,7 +376,6 @@ async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str,
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
-
 
 
 def find_permalinks(data):
@@ -412,9 +435,10 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     logging.info(f"[Reddit] Input parameters: {parameters}")
     MAX_EXPIRATION_SECONDS = max_oldness_seconds
     yielded_items = 0
+    batch_size = 20  # You can adjust this batch size as needed
 
     await asyncio.sleep(random.uniform(3, 15))
-    
+
     async with aiohttp.ClientSession() as session:
         for i in range(nb_subreddit_attempts):
             await asyncio.sleep(random.uniform(1, i))
@@ -437,11 +461,21 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
                 selected_function = scrap_subreddit_json
                 if random.random() < new_layout_scraping_weight:
                     selected_function = scrap_subreddit_new_layout
-                async for result in selected_function(session, subreddit_url, yielded_items, MAXIMUM_ITEMS_TO_COLLECT):
-                    result = post_process_item(result)
-                    if is_valid_item(result, min_post_length):
-                        logging.info(f"[Reddit] Found Reddit comment: {result}")
-                        yield result
-                        yielded_items += 1
-                    if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
-                        break
+                if random.random() < new_layout_scraping_weight:
+                    async for result in scrap_subreddit_parallel(session, subreddit_url, yielded_items, MAXIMUM_ITEMS_TO_COLLECT, batch_size):
+                        result = post_process_item(result)
+                        if is_valid_item(result, min_post_length):
+                            logging.info(f"[Reddit] Found Reddit comment: {result}")
+                            yield result
+                            yielded_items += 1
+                        if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
+                            break
+                else:
+                    async for result in selected_function(session, subreddit_url, yielded_items, MAXIMUM_ITEMS_TO_COLLECT):
+                        result = post_process_item(result)
+                        if is_valid_item(result, min_post_length):
+                            logging.info(f"[Reddit] Found Reddit comment: {result}")
+                            yield result
+                            yielded_items += 1
+                        if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
+                            break
