@@ -1,3 +1,4 @@
+
 import random
 import aiohttp
 from aiohttp import ClientSession
@@ -104,19 +105,21 @@ def split_strings_subreddit_name(input_string):
     words.append(input_string[start:])
     return ' '.join(words)
 
-async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3):
+async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3, semaphore=None):
     for attempt in range(retries):
         try:
-            async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers, timeout=BASE_TIMEOUT) as response:
-                response.raise_for_status()
-                return await response.json()
+            async with semaphore:
+                async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers, timeout=BASE_TIMEOUT) as response:
+                    response.raise_for_status()
+                    return await response.json()
         except aiohttp.ClientError as e:
             logging.warning(f"[Retry {attempt + 1}/{retries}] Request failed: {e}. Retrying...")
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     logging.error(f"[Reddit] Failed to fetch {url} after {retries} attempts")
     return None
 
-async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
+
+async def scrap_post(session: ClientSession, url: str, count: int, limit: int, semaphore: asyncio.Semaphore) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
 
@@ -173,10 +176,14 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
 
     async def listing(data) -> AsyncGenerator[Item, None]:
         nonlocal count
+        tasks = []
         for item_data in data["data"]["children"]:
             if count >= limit:
                 break
-            async for item in kind(item_data):
+            tasks.append(kind(item_data))
+        results = await asyncio.gather(*tasks)
+        for items in results:
+            for item in items:
                 if count < limit:
                     yield item
                     count += 1
@@ -207,7 +214,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
     logging.info(f"[Reddit] Scraping - getting {_url}")
 
     try:
-        response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)})
+        response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, semaphore=semaphore)
         if not response_json:
             return
         [_post, comments] = response_json
@@ -223,8 +230,12 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
 
         try:
+            tasks = []
             for result in comments["data"]["children"]:
-                async for item in kind(result):
+                tasks.append(kind(result))
+            results = await asyncio.gather(*tasks)
+            for items in results:
+                for item in items:
                     if count < limit:
                         yield item
                         count += 1
@@ -238,13 +249,14 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
 
 
 
-async def scrap_subreddit(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
+async def scrap_subreddit(session: ClientSession, subreddit_url: str, count: int, limit: int, semaphore: asyncio.Semaphore) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
     try:
         async with session.get(f'{MANAGER_IP}/proxy?url={subreddit_url}', headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
             html_content = await response.text()
             html_tree = fromstring(html_content)
+            tasks = []
             for post in html_tree.xpath("//shreddit-post/@permalink"):
                 if count >= limit:
                     break
@@ -252,18 +264,13 @@ async def scrap_subreddit(session: ClientSession, subreddit_url: str, count: int
                 if url.startswith("/r/"):
                     url = "https://www.reddit.com" + post
                 await asyncio.sleep(1)
-                try:
-                    if "https" not in url:
-                        url = f"https://reddit.com{url}"
-                    async for item in scrap_post(session, url, count, limit):
-                        if count < limit:
-                            yield item
-                            count += 1
-                except GeneratorExit:
-                    logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit() - post: {url}")
-                    return
-                except Exception as e:
-                    logging.exception(f"[Reddit] Error scraping post {url}: {e}")
+                tasks.append(scrap_post(session, url, count, limit, semaphore))
+            results = await asyncio.gather(*tasks)
+            for items in results:
+                for item in items:
+                    if count < limit:
+                        yield item
+                        count += 1
     except GeneratorExit:
         logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit()")
         return
@@ -271,7 +278,8 @@ async def scrap_subreddit(session: ClientSession, subreddit_url: str, count: int
         logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
 
 
-async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
+
+async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count: int, limit: int, semaphore: asyncio.Semaphore) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
 
@@ -286,31 +294,28 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
     await asyncio.sleep(1)
 
     try:
-        response_json = await fetch_with_retry(session, url_to_fetch, headers={"User-Agent": random.choice(USER_AGENT_LIST)})
+        response_json = await fetch_with_retry(session, url_to_fetch, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, semaphore=semaphore)
         if not response_json:
             return
 
         permalinks = list(find_permalinks(response_json))
 
+        tasks = []
         for permalink in permalinks:
             if count >= limit:
                 break
-            try:
-                if random.random() < SKIP_POST_PROBABILITY:
-                    continue
-                url = permalink
-                if "https" not in url:
-                    url = f"https://reddit.com{url}"
-                async for item in scrap_post(session, url, count, limit):
-                    if count < limit:
-                        yield item
-                        count += 1
-            except GeneratorExit:
-                logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_json() - permalink: {permalink}")
-                return
-            except Exception as e:
-                logging.exception(f"[Reddit] [JSON MODE] Error detected: {e}")
-
+            if random.random() < SKIP_POST_PROBABILITY:
+                continue
+            url = permalink
+            if "https" not in url:
+                url = f"https://reddit.com{url}"
+            tasks.append(scrap_post(session, url, count, limit, semaphore))
+        results = await asyncio.gather(*tasks)
+        for items in results:
+            for item in items:
+                if count < limit:
+                    yield item
+                    count += 1
     except GeneratorExit:
         logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_json()")
         return
@@ -320,13 +325,15 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
 
 
 
-async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
+
+async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str, count: int, limit: int, semaphore: asyncio.Semaphore) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
     try:
         async with session.get(f'{MANAGER_IP}/proxy?url={subreddit_url}', headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
             html_content = await response.text()
             html_tree = fromstring(html_content)
+            tasks = []
             for post in html_tree.xpath("//shreddit-post/@permalink"):
                 if count >= limit:
                     break
@@ -334,23 +341,19 @@ async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str,
                 if url.startswith("/r/"):
                     url = "https://www.reddit.com" + post
                 await asyncio.sleep(1)
-                try:
-                    if "https" not in url:
-                        url = f"https://reddit.com{url}"
-                    async for item in scrap_post(session, url, count, limit):
-                        if count < limit:
-                            yield item
-                            count += 1
-                except GeneratorExit:
-                    logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_new_layout() - post: {url}")
-                    return
-                except Exception as e:
-                    logging.exception(f"[Reddit] Error scraping post {url}: {e}")
+                tasks.append(scrap_post(session, url, count, limit, semaphore))
+            results = await asyncio.gather(*tasks)
+            for items in results:
+                for item in items:
+                    if count < limit:
+                        yield item
+                        count += 1
     except GeneratorExit:
         logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_new_layout()")
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
+
 
 
 
@@ -398,6 +401,8 @@ def correct_reddit_url(url):
     corrected_url = re.sub(r'(/r/){2,}', '/r/', url)
     return corrected_url
 
+MAX_CONCURRENT_REQUESTS = 20
+
 async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     global MAX_EXPIRATION_SECONDS, SKIP_POST_PROBABILITY
     (
@@ -414,6 +419,8 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
 
     await asyncio.sleep(random.uniform(3, 15))
     
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
     async with aiohttp.ClientSession() as session:
         for i in range(nb_subreddit_attempts):
             await asyncio.sleep(random.uniform(1, i))
@@ -424,7 +431,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
                 raise ValueError(f"Not a Reddit URL {subreddit_url}")
             url_parameters = subreddit_url.split("reddit.com")[1].split("/")[1:]
             if "comments" in url_parameters:
-                async for result in scrap_post(session, subreddit_url, yielded_items, MAXIMUM_ITEMS_TO_COLLECT):
+                async for result in scrap_post(session, subreddit_url, yielded_items, MAXIMUM_ITEMS_TO_COLLECT, semaphore):
                     result = post_process_item(result)
                     if is_valid_item(result, min_post_length):
                         logging.info(f"[Reddit] Found Reddit post: {result}")
@@ -436,7 +443,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
                 selected_function = scrap_subreddit_json
                 if random.random() < new_layout_scraping_weight:
                     selected_function = scrap_subreddit_new_layout
-                async for result in selected_function(session, subreddit_url, yielded_items, MAXIMUM_ITEMS_TO_COLLECT):
+                async for result in selected_function(session, subreddit_url, yielded_items, MAXIMUM_ITEMS_TO_COLLECT, semaphore):
                     result = post_process_item(result)
                     if is_valid_item(result, min_post_length):
                         logging.info(f"[Reddit] Found Reddit comment: {result}")
