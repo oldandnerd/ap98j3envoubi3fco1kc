@@ -26,6 +26,7 @@ class CommentCollector:
         self.items = []
         self.lock = asyncio.Lock()
         self.stop_fetching = False
+        self.logged_stop_message = False
 
     async def add_item(self, item):
         async with self.lock:
@@ -34,6 +35,9 @@ class CommentCollector:
                 self.total_items_collected += 1
                 if self.total_items_collected >= self.max_items:
                     self.stop_fetching = True
+                    if not self.logged_stop_message:
+                        logging.info("Maximum items collected, stopping further fetches.")
+                        self.logged_stop_message = True
                 return True
             return False
 
@@ -137,9 +141,9 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         await asyncio.gather(*tasks)
 
-        for item in collector.items:
+        for index, item in enumerate(collector.items, start=1):
             try:
-                logging.info(f"Found comment {collector.total_items_collected}: {item}")
+                logging.info(f"Found comment {index}: {item}")
                 yield item
             except GeneratorExit:
                 logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
