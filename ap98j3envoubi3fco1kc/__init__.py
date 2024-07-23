@@ -123,39 +123,49 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
     async def post(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         content = data["data"]
+        created_utc = content["created_utc"]
+
+        if not is_within_timeframe_seconds(created_utc, MAX_EXPIRATION_SECONDS):
+            logging.info(f"[Reddit] Skipping old post: {url}")
+            return
+
         item_ = Item(
             content=Content(content["selftext"]),
             author=Author(hashlib.sha1(bytes(content["author"], encoding="utf-8")).hexdigest()),
-            created_at=CreatedAt(str(format_timestamp(content["created_utc"]))),
+            created_at=CreatedAt(str(format_timestamp(created_utc))),
             title=Title(content["title"]),
             domain=Domain("reddit.com"),
             url=Url("https://reddit.com" + content["permalink"]),
         )
-        if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
-            if len(tokenizer.encode(item_.content).tokens) > 512:
-                logging.info(f"[Reddit] Skipping post with more than 512 tokens")
-                return
-            if count < limit:
-                yield item_
-                count += 1
+        if len(tokenizer.encode(item_.content).tokens) > 512:
+            logging.info(f"[Reddit] Skipping post with more than 512 tokens")
+            return
+        if count < limit:
+            yield item_
+            count += 1
 
     async def comment(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         content = data["data"]
+        created_utc = content["created_utc"]
+
+        if not is_within_timeframe_seconds(created_utc, MAX_EXPIRATION_SECONDS):
+            logging.info(f"[Reddit] Skipping old comment: {url}")
+            return
+
         item_ = Item(
             content=Content(content["body"]),
             author=Author(hashlib.sha1(bytes(content["author"], encoding="utf-8")).hexdigest()),
-            created_at=CreatedAt(str(format_timestamp(content["created_utc"]))),
+            created_at=CreatedAt(str(format_timestamp(created_utc))),
             domain=Domain("reddit.com"),
             url=Url("https://reddit.com" + content["permalink"]),
         )
-        if is_within_timeframe_seconds(content["created_utc"], MAX_EXPIRATION_SECONDS):
-            if len(tokenizer.encode(item_.content).tokens) > 512:
-                logging.info(f"[Reddit] Skipping comment with more than 512 tokens")
-                return
-            if count < limit:
-                yield item_
-                count += 1
+        if len(tokenizer.encode(item_.content).tokens) > 512:
+            logging.info(f"[Reddit] Skipping comment with more than 512 tokens")
+            return
+        if count < limit:
+            yield item_
+            count += 1
 
     async def more(data) -> AsyncGenerator[Item, None]:
         for __item__ in []:
@@ -225,6 +235,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
+
 
 
 async def scrap_subreddit(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
