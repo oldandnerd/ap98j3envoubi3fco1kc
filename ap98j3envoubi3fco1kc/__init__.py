@@ -113,10 +113,6 @@ def split_strings_subreddit_name(input_string):
     return ' '.join(words)
 
 async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3):
-    if "comments" in url:  # <-- Check to skip comment URLs
-        logging.info(f"[Reddit] Skipping comment URL: {url}")
-        return None
-
     for attempt in range(retries):
         try:
             async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers, timeout=BASE_TIMEOUT) as response:
@@ -127,7 +123,6 @@ async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3)
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     logging.error(f"[Reddit] Failed to fetch {url} after {retries} attempts")
     return None
-
 
 
 async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
@@ -217,7 +212,6 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             raise err
 
     resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
-    
     _url = url + ".json"
     logging.info(f"[Reddit] Scraping - getting {_url}")
 
@@ -250,8 +244,6 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
-
-
 
 
 async def fetch_multiple_posts(session: ClientSession, urls: list, limit: int) -> AsyncGenerator[Item, None]:
@@ -354,11 +346,12 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
                         if count < limit:
                             yield item
                             count += 1
+
     except GeneratorExit:
+        logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_json()")
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
-
 
 
 
@@ -407,7 +400,6 @@ def find_permalinks(data):
     elif isinstance(data, list):
         for item in data:
             yield from find_permalinks(item)
-
             
 def post_process_item(item):
     try:
