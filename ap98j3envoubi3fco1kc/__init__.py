@@ -55,7 +55,6 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         logging.info(f"Fetched URL from proxy: {subreddit_url}")
 
-        all_posts = []
         after = None
         items_collected = 0
 
@@ -64,7 +63,11 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             if after:
                 params['after'] = after
 
-            response_json = await fetch_with_proxy(session, f"{subreddit_url}?limit=100&after={after}")
+            url = f"{subreddit_url}?limit=100"
+            if after:
+                url += f"&after={after}"
+
+            response_json = await fetch_with_proxy(session, url)
 
             if not response_json:
                 logging.error("Response JSON is empty or invalid")
@@ -78,9 +81,8 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             posts = response_json['data']['children']
             after = response_json['data'].get('after')
 
-            # Stop if there are no more posts to fetch
-            if len(posts) < 100:
-                logging.info("Less than 100 posts fetched, no more posts to retrieve.")
+            if not posts:
+                logging.info("No more posts to retrieve.")
                 break
 
             for post in posts:
@@ -122,6 +124,10 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                                 items_collected += 1
                             else:
                                 logging.info(f"Comment skipped due to length or timeframe: {comment_content}")
+
+            if not after:
+                logging.info("No more posts to fetch, 'after' is None.")
+                break
 
 # Example usage:
 # parameters = {
