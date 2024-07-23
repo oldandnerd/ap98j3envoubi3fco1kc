@@ -2,7 +2,7 @@ import random
 import aiohttp
 from aiohttp import ClientSession, TCPConnector
 import asyncio
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List
 import time
 from datetime import datetime as datett
 from datetime import timezone
@@ -48,6 +48,12 @@ DEFAULT_MIN_POST_LENGTH = 5
 DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3
 DEFAULT_LAYOUT_SCRAPING_WEIGHT = 0.05
 DEFAULT_SKIP_PROBA = 0.1
+
+async def collect_from_generator(generator: AsyncGenerator) -> List:
+    results = []
+    async for item in generator:
+        results.append(item)
+    return results
 
 async def get_subreddit_url():
     retries = 5
@@ -245,15 +251,15 @@ async def fetch_multiple_posts(session: ClientSession, urls: list, limit: int) -
     for url in urls:
         if count >= limit:
             break
-        tasks.append(scrap_post(session, url, count, limit))
-    
+        tasks.append(collect_from_generator(scrap_post(session, url, count, limit)))
+
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     for result in results:
         if isinstance(result, Exception):
             logging.exception(f"[Reddit] An error occurred: {result}")
         else:
-            async for item in result:
+            for item in result:
                 if count < limit:
                     yield item
                     count += 1
@@ -297,6 +303,7 @@ async def scrap_subreddit_parallel(session: ClientSession, subreddit_url: str, c
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
+
 
 
 
