@@ -31,7 +31,7 @@ tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
 
 logging.basicConfig(level=logging.INFO)
 
-MANAGER_IP = "http://192.227.159.3:8000"
+MANAGER_IP = "http://192.227.159.3:8001"
 USER_AGENT_LIST = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
 ]
