@@ -204,28 +204,32 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         _url = url + ".json"
         logging.info(f"[Reddit] Scraping - getting {_url}")
         async with session.get(_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-            response_json = await response.json()
-            [_post, comments] = response_json
-            try:
-                async for item in kind(_post):
-                    yield item
-            except GeneratorExit:
-                logging.info("[Reddit] Scraper generator exit...")
-                return
-            except Exception as e:
-                logging.exception(f"An error occurred on {_url}: {e}")
-
-            try:
-                for result in comments["data"]["children"]:
-                    async for item in kind(result):
+            if response.headers.get("Content-Type") == "application/json":
+                response_json = await response.json()
+                [_post, comments] = response_json
+                try:
+                    async for item in kind(_post):
                         yield item
-            except GeneratorExit:
-                logging.info("[Reddit] Scraper generator exit...")
-                return
-            except Exception as e:
-                logging.exception(f"An error occurred on {_url}: {e}")
+                except GeneratorExit:
+                    logging.info("[Reddit] Scraper generator exit...")
+                    return
+                except Exception as e:
+                    logging.exception(f"An error occurred on {_url}: {e}")
+
+                try:
+                    for result in comments["data"]["children"]:
+                        async for item in kind(result):
+                            yield item
+                except GeneratorExit:
+                    logging.info("[Reddit] Scraper generator exit...")
+                    return
+                except Exception as e:
+                    logging.exception(f"An error occurred on {_url}: {e}")
+            else:
+                logging.error(f"[Reddit] Failed to fetch {_url}: Attempt to decode JSON with unexpected mimetype: {response.headers.get('Content-Type')}")
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
+
 
 
 
