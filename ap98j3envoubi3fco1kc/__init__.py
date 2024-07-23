@@ -309,6 +309,7 @@ async def scrap_subreddit_parallel(session: ClientSession, subreddit_url: str, c
 
 
 
+
 async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
@@ -332,7 +333,8 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
 
         for i in range(0, len(permalinks), limit):
             batch_permalinks = permalinks[i:i + limit]
-            tasks = [collect_from_generator(scrap_post(session, permalink, count, limit)) for permalink in batch_permalinks]
+            full_urls = [f"https://reddit.com{permalink}" for permalink in batch_permalinks]
+            tasks = [collect_from_generator(scrap_post(session, url, count, limit)) for url in full_urls]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
@@ -349,6 +351,7 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
+
 
 
 
