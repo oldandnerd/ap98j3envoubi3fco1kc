@@ -70,11 +70,11 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
             if post_kind == 't3':
                 post_title = post_info.get('title', '[no title]')
-                comments = []
+                post_comments_url = f"https://www.reddit.com{post_info.get('permalink', '')}.json"
+                comments_json = await fetch_with_proxy(session, post_comments_url)
                 
-                if 'data' in response_json and len(response_json['data']['children']) > 1:
-                    comments = response_json['data']['children'][1]['data']['children']
-                
+                comments = comments_json[1]['data']['children'] if len(comments_json) > 1 else []
+
                 for comment in comments:
                     if items_collected >= maximum_items_to_collect:
                         break
