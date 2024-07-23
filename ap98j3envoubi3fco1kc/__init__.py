@@ -129,14 +129,14 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
     if count >= limit:
         return
 
-    async def process_post(data) -> AsyncGenerator[Item, None]:
+    def process_post(data):
         nonlocal count
         content = data["data"]
         created_utc = content["created_utc"]
 
         if not is_within_timeframe_seconds(created_utc, MAX_EXPIRATION_SECONDS):
             logging.info(f"[Reddit] Skipping old post: {url}")
-            return
+            return None
 
         item_ = Item(
             content=Content(content.get("selftext", "")),
@@ -148,19 +148,20 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         )
         if len(tokenizer.encode(item_.content).tokens) > 512:
             logging.info(f"[Reddit] Skipping post with more than 512 tokens")
-            return
+            return None
         if count < limit:
-            yield item_
             count += 1
+            return item_
+        return None
 
-    async def process_comment(data) -> AsyncGenerator[Item, None]:
+    def process_comment(data):
         nonlocal count
         content = data["data"]
         created_utc = content["created_utc"]
 
         if not is_within_timeframe_seconds(created_utc, MAX_EXPIRATION_SECONDS):
             logging.info(f"[Reddit] Skipping old comment: {url}")
-            return
+            return None
 
         item_ = Item(
             content=Content(content["body"]),
@@ -171,43 +172,12 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         )
         if len(tokenizer.encode(item_.content).tokens) > 512:
             logging.info(f"[Reddit] Skipping comment with more than 512 tokens")
-            return
+            return None
         if count < limit:
-            yield item_
             count += 1
+            return item_
+        return None
 
-    async def process_listing(data) -> AsyncGenerator[Item, None]:
-        nonlocal count
-        for item_data in data["data"]["children"]:
-            if count >= limit:
-                break
-            async for item in process_kind(item_data):
-                if count < limit:
-                    yield item
-                    count += 1
-
-    async def process_kind(data) -> AsyncGenerator[Item, None]:
-        nonlocal count
-        if count >= limit:
-            return
-        if not isinstance(data, dict):
-            return
-        resolver = resolvers.get(data["kind"], None)
-        if not resolver:
-            logging.warning(f"[Reddit] {data['kind']} is not implemented. Skipping...")
-            return
-        try:
-            async for item in resolver(data):
-                if count < limit:
-                    yield item
-                    count += 1
-        except GeneratorExit:
-            logging.info(f"[Reddit] GeneratorExit caught in process_kind()")
-            return
-        except Exception as err:
-            raise err
-
-    resolvers = {"Listing": process_listing, "t1": process_comment, "t3": process_post}
     _url = url + ".json"
     logging.info(f"[Reddit] Scraping - getting {_url}")
 
@@ -215,23 +185,25 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)})
         if not response_json:
             return
+
         post_data, comments_data = response_json
 
         # Process the post
-        async for item in process_kind(post_data):
-            if count < limit:
-                yield item
-                count += 1
+        item = process_post(post_data["data"]["children"][0])
+        if item:
+            yield item
 
         # Process comments
-        async for comment in comments_data["data"]["children"]:
-            async for item in process_kind(comment):
-                if count < limit:
-                    yield item
-                    count += 1
+        for comment in comments_data["data"]["children"]:
+            item = process_comment(comment)
+            if item:
+                yield item
 
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
+    except Exception as e:
+        logging.error(f"[Reddit] An error occurred: {e}")
+
 
 
 
