@@ -43,6 +43,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     async with aiohttp.ClientSession() as session:
         url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_url')
         subreddit_url = url_response['url']
+        logging.info(f"Fetched URL from proxy: {subreddit_url}")  # Print the fetched URL
 
         response_json = await fetch_with_proxy(session, subreddit_url)
 
@@ -82,3 +83,11 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
 
                     yield item
                     items_collected += 1
+
+# Example usage:
+# parameters = {
+#     'max_oldness_seconds': 86400,
+#     'maximum_items_to_collect': 10,
+#     'min_post_length': 10
+# }
+# asyncio.run(query(parameters))
