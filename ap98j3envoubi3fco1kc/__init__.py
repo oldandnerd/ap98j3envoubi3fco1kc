@@ -3,7 +3,7 @@ import asyncio
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict
 from exorde_data import (
     Item,
     Content,
@@ -133,11 +133,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         subreddit_urls = url_response['urls']
 
-        tasks = []
-        for subreddit_url in subreddit_urls:
-            if not subreddit_url.endswith('.json'):
-                subreddit_url = subreddit_url.rstrip('/') + '/.json'
-            tasks.append(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length))
+        tasks = [asyncio.create_task(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length)) for subreddit_url in subreddit_urls]
 
         try:
             await asyncio.gather(*tasks)
@@ -152,6 +148,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
             for task in tasks:
                 task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             raise
 
 # Example usage:
