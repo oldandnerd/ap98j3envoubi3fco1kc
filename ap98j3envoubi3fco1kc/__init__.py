@@ -234,9 +234,6 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
 
 
 
-
-
-
 async def fetch_multiple_posts(session: ClientSession, urls: list, limit: int) -> AsyncGenerator[Item, None]:
     tasks = []
     count = 0
