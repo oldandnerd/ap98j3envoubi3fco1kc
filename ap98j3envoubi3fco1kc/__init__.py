@@ -21,11 +21,18 @@ MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 REDDIT_URL_TEMPLATE = "https://www.reddit.com{subreddit_url}.json?limit=100"
 
-async def fetch_with_proxy(session, url):
+async def fetch_with_proxy(session, url, retries=5, backoff_factor=0.3):
     headers = {'User-Agent': USER_AGENT}
-    async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
-        response.raise_for_status()
-        return await response.json()
+    for attempt in range(retries):
+        try:
+            async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
+                response.raise_for_status()
+                return await response.json()
+        except aiohttp.ClientError as e:
+            logging.error(f"[Retry {attempt + 1}/{retries}] Error fetching data: {e}, url={url}")
+            if attempt < retries - 1:
+                await asyncio.sleep(backoff_factor * (2 ** attempt))
+    raise aiohttp.ClientError(f"Failed to fetch {url} after {retries} attempts")
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -49,7 +56,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_url')
         subreddit_url = url_response['url']
 
-        # Ensure the URL ends with /.json
+        # Ensure the URL ends with /
         subreddit_url = subreddit_url.rstrip('/') + '/'
 
         logging.info(f"Fetched URL from proxy: {subreddit_url}")
@@ -59,7 +66,11 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         total_fetched = 0
 
         while items_collected < maximum_items_to_collect and total_fetched < 1000:
-            response_json = await fetch_posts(session, subreddit_url, after)
+            try:
+                response_json = await fetch_posts(session, subreddit_url, after)
+            except aiohttp.ClientError as e:
+                logging.error(f"Failed to fetch posts: {e}")
+                break
 
             if not response_json:
                 logging.error("Response JSON is empty or invalid")
