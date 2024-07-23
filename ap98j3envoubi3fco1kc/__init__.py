@@ -43,6 +43,11 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     async with aiohttp.ClientSession() as session:
         url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_url')
         subreddit_url = url_response['url']
+        
+        # Ensure the URL ends with .json
+        if not subreddit_url.endswith('/.json'):
+            subreddit_url = subreddit_url.rstrip('/') + '/.json'
+
         logging.info(f"Fetched URL from proxy: {subreddit_url}")  # Print the fetched URL
 
         response_json = await fetch_with_proxy(session, subreddit_url)
