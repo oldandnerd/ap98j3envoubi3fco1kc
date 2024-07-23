@@ -55,6 +55,7 @@ async def collect_from_generator(generator: AsyncGenerator) -> List:
         results.append(item)
     return results
 
+
 async def get_subreddit_url():
     retries = 5
     for attempt in range(retries):
@@ -265,6 +266,7 @@ async def fetch_multiple_posts(session: ClientSession, urls: list, limit: int) -
                     count += 1
 
 
+
 async def scrap_subreddit_parallel(session: ClientSession, subreddit_url: str, count: int, limit: int, batch_size: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
@@ -330,14 +332,14 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
 
         for i in range(0, len(permalinks), limit):
             batch_permalinks = permalinks[i:i + limit]
-            tasks = [scrap_post(session, permalink, count, limit) for permalink in batch_permalinks]
+            tasks = [collect_from_generator(scrap_post(session, permalink, count, limit)) for permalink in batch_permalinks]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):
                     logging.exception(f"[Reddit] An error occurred: {result}")
                 else:
-                    async for item in result:
+                    for item in result:
                         if count < limit:
                             yield item
                             count += 1
@@ -347,6 +349,7 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
+
 
 
 
@@ -441,7 +444,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     logging.info(f"[Reddit] Input parameters: {parameters}")
     MAX_EXPIRATION_SECONDS = max_oldness_seconds
     yielded_items = 0
-    batch_size = 100  # You can adjust this batch size as needed
+    batch_size = 20  # You can adjust this batch size as needed
 
     await asyncio.sleep(random.uniform(3, 15))
 
