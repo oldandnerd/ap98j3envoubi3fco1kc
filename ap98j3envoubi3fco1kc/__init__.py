@@ -144,7 +144,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             created_at=CreatedAt(str(format_timestamp(created_utc))),
             title=Title(content["title"]),
             domain=Domain("reddit.com"),
-            url=Url("https://reddit.com" + content["permalink"]),
+            url=Url(url),
         )
         if len(tokenizer.encode(item_.content).tokens) > 512:
             logging.info(f"[Reddit] Skipping post with more than 512 tokens")
@@ -160,7 +160,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         created_utc = content["created_utc"]
 
         if not is_within_timeframe_seconds(created_utc, MAX_EXPIRATION_SECONDS):
-            logging.info(f"[Reddit] Skipping old comment: {url}")
+            logging.info(f"[Reddit] Skipping old comment")
             return None
 
         item_ = Item(
@@ -168,7 +168,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             author=Author(hashlib.sha1(bytes(content["author"], encoding="utf-8")).hexdigest()),
             created_at=CreatedAt(str(format_timestamp(created_utc))),
             domain=Domain("reddit.com"),
-            url=Url("https://reddit.com" + content["permalink"]),
+            url=Url(url + content["permalink"]),
         )
         if len(tokenizer.encode(item_.content).tokens) > 512:
             logging.info(f"[Reddit] Skipping comment with more than 512 tokens")
@@ -189,20 +189,21 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         post_data, comments_data = response_json
 
         # Process the post
-        item = process_post(post_data["data"]["children"][0])
-        if item:
-            yield item
+        post_item = process_post(post_data["data"]["children"][0])
+        if post_item:
+            yield post_item
 
         # Process comments
         for comment in comments_data["data"]["children"]:
-            item = process_comment(comment)
-            if item:
-                yield item
+            comment_item = process_comment(comment)
+            if comment_item:
+                yield comment_item
 
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
     except Exception as e:
         logging.error(f"[Reddit] An error occurred: {e}")
+
 
 
 
