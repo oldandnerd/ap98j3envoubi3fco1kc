@@ -3,7 +3,6 @@ import asyncio
 import hashlib
 import logging
 import random
-import re
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict
 from exorde_data import (
@@ -20,29 +19,12 @@ logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-REDDIT_URL_TEMPLATE = "https://www.reddit.com{subreddit_url}.json?limit=100"
 
-def correct_reddit_url(url):
-    parts = url.split("https://reddit.comhttps://", 1)
-    if len(parts) == 2:
-        corrected_url = "https://" + parts[1]
-        return corrected_url
-    # Remove extra "r/" from URLs if present
-    corrected_url = re.sub(r'(/r/){2,}', '/r/', url)
-    return corrected_url
-
-async def fetch_with_proxy(session, url, retries=5, backoff_factor=0.3):
+async def fetch_with_proxy(session, url):
     headers = {'User-Agent': USER_AGENT}
-    for attempt in range(retries):
-        try:
-            async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
-                response.raise_for_status()
-                return await response.json()
-        except aiohttp.ClientError as e:
-            logging.error(f"[Retry {attempt + 1}/{retries}] Error fetching data: {e}, url={url}")
-            if attempt < retries - 1:
-                await asyncio.sleep(backoff_factor * (2 ** attempt))
-    raise aiohttp.ClientError(f"Failed to fetch {url} after {retries} attempts")
+    async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
+        response.raise_for_status()
+        return await response.json()
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -50,20 +32,6 @@ def format_timestamp(timestamp):
 def is_within_timeframe_seconds(created_utc, max_oldness_seconds):
     current_time = datetime.now(timezone.utc).timestamp()
     return (current_time - created_utc) <= max_oldness_seconds
-
-def is_valid_item(item, min_post_length):
-    return (
-        len(item.content) >= min_post_length and
-        "reddit.com" in item.url and
-        item.content != "[deleted]"
-    )
-
-async def fetch_posts(session, subreddit_url, after=None):
-    url = REDDIT_URL_TEMPLATE.format(subreddit_url=subreddit_url)
-    if after:
-        url += f"&after={after}"
-    url = correct_reddit_url(url)  # Correct the URL before making the request
-    return await fetch_with_proxy(session, url)
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
@@ -73,105 +41,64 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     async with aiohttp.ClientSession() as session:
         url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_url')
         subreddit_url = url_response['url']
-
-        # Ensure the URL is correctly formatted
-        if not subreddit_url.startswith('/r/'):
-            subreddit_url = f'/r/{subreddit_url}'
-        subreddit_url = subreddit_url.rstrip('/') + '/'
+        
+        # Ensure the URL ends with .json
+        if not subreddit_url.endswith('/.json'):
+            subreddit_url = subreddit_url.rstrip('/') + '/.json'
 
         logging.info(f"Fetched URL from proxy: {subreddit_url}")
 
+        response_json = await fetch_with_proxy(session, subreddit_url)
+
+        if not response_json:
+            logging.error("Response JSON is empty or invalid")
+            return
+
+        # Check the structure of the response JSON
+        if 'data' not in response_json or 'children' not in response_json['data']:
+            logging.error("Unexpected JSON structure")
+            return
+
+        post_data = response_json['data']['children']
         items_collected = 0
-        after = None
-        total_fetched = 0
 
-        while items_collected < maximum_items_to_collect and total_fetched < 1000:
-            try:
-                response_json = await fetch_posts(session, subreddit_url, after)
-            except aiohttp.ClientError as e:
-                logging.error(f"Failed to fetch posts: {e}")
+        for post in post_data:
+            if items_collected >= maximum_items_to_collect:
                 break
+            post_kind = post.get('kind')
+            post_info = post.get('data', {})
 
-            if not response_json:
-                logging.error("Response JSON is empty or invalid")
-                return
+            if post_kind == 't3':
+                post_title = post_info.get('title', '[no title]')
+                post_comments_url = f"https://www.reddit.com{post_info.get('permalink', '')}.json"
+                comments_json = await fetch_with_proxy(session, post_comments_url)
+                
+                comments = comments_json[1]['data']['children'] if len(comments_json) > 1 else []
 
-            if isinstance(response_json, dict):
-                post_data = response_json.get('data', {}).get('children', [])
-                after = response_json.get('data', {}).get('after', None)
-            elif isinstance(response_json, list):
-                post_data = response_json[0].get('data', {}).get('children', [])
-                after = response_json[0].get('data', {}).get('after', None)
+                for comment in comments:
+                    if items_collected >= maximum_items_to_collect:
+                        break
+                    if comment['kind'] == 't1':
+                        comment_data = comment['data']
+                        comment_content = comment_data.get('body', '[deleted]')
+                        comment_author = comment_data.get('author', '[unknown]')
+                        comment_created_at = comment_data['created_utc']
+                        comment_url = f"https://reddit.com{comment_data['permalink']}"
 
-            if not post_data:
-                logging.info("No more posts to fetch.")
-                break
+                        if (len(comment_content) >= min_post_length and
+                            is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
 
-            for post in post_data:
-                if items_collected >= maximum_items_to_collect:
-                    break
-                post_kind = post.get('kind')
-                post_info = post.get('data', {})
+                            item = Item(
+                                content=Content(comment_content),
+                                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                                created_at=CreatedAt(format_timestamp(comment_created_at)),
+                                title=Title(post_title),
+                                domain=Domain("reddit.com"),
+                                url=Url(comment_url),
+                            )
 
-                if post_kind == 't3':  # Ensuring it's a post
-                    post_title = post_info.get('title', '[no title]')
-                    post_created_at = post_info.get('created_utc', 0)
-                    post_url = f"https://reddit.com{post_info.get('permalink', '')}"
-
-                    if not is_within_timeframe_seconds(post_created_at, max_oldness_seconds):
-                        continue
-
-                    # Process the post itself
-                    post_content = post_info.get('selftext', '[no content]')
-                    if len(post_content) >= min_post_length:
-                        item = Item(
-                            content=Content(post_content),
-                            author=Author(hashlib.sha1(bytes(post_info.get('author', '[unknown]'), encoding="utf-8")).hexdigest()),
-                            created_at=CreatedAt(format_timestamp(post_created_at)),
-                            title=Title(post_title),
-                            domain=Domain("reddit.com"),
-                            url=Url(post_url),
-                        )
-
-                        print(item)  # Print the item
-                        yield item
-                        items_collected += 1
-                        if items_collected >= maximum_items_to_collect:
-                            break
-
-                    # Process the comments
-                    if 'replies' in post_info and isinstance(post_info['replies'], dict):
-                        comments = post_info['replies'].get('data', {}).get('children', [])
-                        for comment in comments:
-                            if items_collected >= maximum_items_to_collect:
-                                break
-                            if comment['kind'] == 't1':
-                                comment_data = comment['data']
-                                comment_content = comment_data.get('body', '[deleted]')
-                                comment_author = comment_data.get('author', '[unknown]')
-                                comment_created_at = comment_data.get('created_utc', 0)
-                                comment_url = f"https://reddit.com{comment_data.get('permalink', '')}"
-
-                                if (len(comment_content) >= min_post_length and
-                                    is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
-
-                                    item = Item(
-                                        content=Content(comment_content),
-                                        author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                                        created_at=CreatedAt(format_timestamp(comment_created_at)),
-                                        title=Title(post_title),
-                                        domain=Domain("reddit.com"),
-                                        url=Url(comment_url),
-                                    )
-
-                                    print(item)  # Print the item
-                                    yield item
-                                    items_collected += 1
-
-            total_fetched += len(post_data)
-            if not after:
-                logging.info("Reached the end of posts or no after cursor found.")
-                break
+                            yield item
+                            items_collected += 1
 
 # Example usage:
 # parameters = {
