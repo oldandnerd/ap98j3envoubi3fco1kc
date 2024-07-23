@@ -150,7 +150,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         except GeneratorExit:
             logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
             task_group.cancel()  # Cancel all ongoing tasks
-            await asyncio.gather(task_group, return_exceptions=True)  # Ensure all tasks are properly cancelled
+            await task_group  # Wait for tasks to be cancelled
             raise  # Re-raise GeneratorExit to properly close the generator
 
 # Example usage:
