@@ -183,10 +183,11 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int, s
             tasks.append(kind(item_data))
         results = await asyncio.gather(*tasks)
         for items in results:
-            for item in items:
-                if count < limit:
-                    yield item
-                    count += 1
+            if items:
+                async for item in items:
+                    if count < limit:
+                        yield item
+                        count += 1
 
     async def kind(data) -> AsyncGenerator[Item, None]:
         nonlocal count
@@ -198,16 +199,10 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int, s
         if not resolver:
             logging.warning(f"[Reddit] {data['kind']} is not implemented. Skipping...")
             return
-        try:
-            async for item in resolver(data):
-                if count < limit:
-                    yield item
-                    count += 1
-        except GeneratorExit:
-            logging.info(f"[Reddit] GeneratorExit caught in kind()")
-            return
-        except Exception as err:
-            raise err
+        async for item in resolver(data):
+            if count < limit:
+                yield item
+                count += 1
 
     resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
     _url = url + ".json"
@@ -218,34 +213,23 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int, s
         if not response_json:
             return
         [_post, comments] = response_json
-        try:
-            async for item in kind(_post):
-                if count < limit:
-                    yield item
-                    count += 1
-        except GeneratorExit:
-            logging.info(f"[Reddit] GeneratorExit caught in scrap_post() - _post")
-            return
-        except Exception as e:
-            logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
-
-        try:
-            tasks = []
-            for result in comments["data"]["children"]:
-                tasks.append(kind(result))
-            results = await asyncio.gather(*tasks)
-            for items in results:
-                for item in items:
+        async for item in kind(_post):
+            if count < limit:
+                yield item
+                count += 1
+        tasks = []
+        for result in comments["data"]["children"]:
+            tasks.append(kind(result))
+        results = await asyncio.gather(*tasks)
+        for items in results:
+            if items:
+                async for item in items:
                     if count < limit:
                         yield item
                         count += 1
-        except GeneratorExit:
-            logging.info(f"[Reddit] GeneratorExit caught in scrap_post() - comments")
-            return
-        except Exception as e:
-            logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
+
 
 
 
@@ -268,15 +252,14 @@ async def scrap_subreddit(session: ClientSession, subreddit_url: str, count: int
                 tasks.append(scrap_post(session, url, count, limit, semaphore))
             results = await asyncio.gather(*tasks)
             for items in results:
-                for item in items:
-                    if count < limit:
-                        yield item
-                        count += 1
-    except GeneratorExit:
-        logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit()")
-        return
+                if items:
+                    async for item in items:
+                        if count < limit:
+                            yield item
+                            count += 1
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
+
 
 
 
@@ -314,15 +297,14 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
             tasks.append(scrap_post(session, url, count, limit, semaphore))
         results = await asyncio.gather(*tasks)
         for items in results:
-            for item in items:
-                if count < limit:
-                    yield item
-                    count += 1
-    except GeneratorExit:
-        logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_json()")
-        return
+            if items:
+                async for item in items:
+                    if count < limit:
+                        yield item
+                        count += 1
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
+
 
 
 
@@ -347,16 +329,13 @@ async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str,
                 tasks.append(scrap_post(session, url, count, limit, semaphore))
             results = await asyncio.gather(*tasks)
             for items in results:
-                for item in items:
-                    if count < limit:
-                        yield item
-                        count += 1
-    except GeneratorExit:
-        logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_new_layout()")
-        return
+                if items:
+                    async for item in items:
+                        if count < limit:
+                            yield item
+                            count += 1
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
-
 
 
 
