@@ -119,9 +119,9 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                             else:
                                 logging.info(f"Comment skipped due to length or timeframe: {comment_content}")
 
-                logging.info(f"Processed post: {post_title}")
+               # logging.info(f"Processed post: {post_title}")
 
-        logging.info(f"Total items collected: {items_collected}")
+        #logging.info(f"Total items collected: {items_collected}")
 
 # Example usage:
 # parameters = {
