@@ -134,10 +134,6 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
     if count >= limit:
         return
 
-    if "comments" in url:  # <-- Skip comment URLs
-        logging.info(f"[Reddit] Skipping comment URL: {url}")
-        return
-
     async def post(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         content = data["data"]
@@ -222,7 +218,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
 
     resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
     
-    _url = url + ".json"  # <-- Appending .json to URL
+    _url = url + ".json"
     logging.info(f"[Reddit] Scraping - getting {_url}")
 
     try:
@@ -346,7 +342,7 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
 
         for i in range(0, len(permalinks), limit):
             batch_permalinks = permalinks[i:i + limit]
-            full_urls = [f"https://reddit.com{permalink}" for permalink in batch_permalinks if "comments" not in permalink]  # <-- Skip comment permalinks
+            full_urls = [f"https://reddit.com{permalink}" for permalink in batch_permalinks]
             tasks = [collect_from_generator(scrap_post(session, url, count, limit)) for url in full_urls]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -362,6 +358,7 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
+
 
 
 
@@ -410,6 +407,7 @@ def find_permalinks(data):
     elif isinstance(data, list):
         for item in data:
             yield from find_permalinks(item)
+
             
 def post_process_item(item):
     try:
