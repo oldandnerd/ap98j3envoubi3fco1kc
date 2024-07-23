@@ -116,11 +116,15 @@ async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3)
     for attempt in range(retries):
         try:
             async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers, timeout=BASE_TIMEOUT) as response:
-                response.raise_for_status()
-                return await response.json()
+                if response.headers.get("Content-Type") == "application/json":
+                    response.raise_for_status()
+                    return await response.json()
+                else:
+                    logging.error(f"[Reddit] Attempt to decode JSON with unexpected mimetype: {response.headers.get('Content-Type')}")
+                    return None
         except aiohttp.ClientError as e:
             logging.warning(f"[Retry {attempt + 1}/{retries}] Request failed: {e}. Retrying...")
-        await asyncio.sleep(backoff_factor * (2 ** attempt))
+            await asyncio.sleep(backoff_factor * (2 ** attempt))
     logging.error(f"[Reddit] Failed to fetch {url} after {retries} attempts")
     return None
 
@@ -130,7 +134,6 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         return
 
     async def post(data) -> AsyncGenerator[Item, None]:
-        """t3"""
         nonlocal count
         content = data["data"]
         item_ = Item(
@@ -155,7 +158,6 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
                 yield item_
 
     async def comment(data) -> AsyncGenerator[Item, None]:
-        """t1"""
         nonlocal count
         content = data["data"]
         item_ = Item(
@@ -203,33 +205,29 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
     try:
         _url = url + ".json"
         logging.info(f"[Reddit] Scraping - getting {_url}")
-        async with session.get(_url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-            if response.headers.get("Content-Type") == "application/json":
-                response_json = await response.json()
-                [_post, comments] = response_json
-                try:
-                    async for item in kind(_post):
-                        yield item
-                except GeneratorExit:
-                    logging.info("[Reddit] Scraper generator exit...")
-                    return
-                except Exception as e:
-                    logging.exception(f"An error occurred on {_url}: {e}")
+        response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)})
+        if response_json is None:
+            return
+        [_post, comments] = response_json
+        try:
+            async for item in kind(_post):
+                yield item
+        except GeneratorExit:
+            logging.info("[Reddit] Scraper generator exit...")
+            return
+        except Exception as e:
+            logging.exception(f"An error occurred on {_url}: {e}")
 
-                try:
-                    for result in comments["data"]["children"]:
-                        async for item in kind(result):
-                            yield item
-                except GeneratorExit:
-                    logging.info("[Reddit] Scraper generator exit...")
-                    return
-                except Exception as e:
-                    logging.exception(f"An error occurred on {_url}: {e}")
-            else:
-                logging.error(f"[Reddit] Failed to fetch {_url}: Attempt to decode JSON with unexpected mimetype: {response.headers.get('Content-Type')}")
+        try:
+            async for item in listing(comments):
+                yield item
+        except GeneratorExit:
+            logging.info("[Reddit] Scraper generator exit...")
+            return
+        except Exception as e:
+            logging.exception(f"An error occurred on {_url}: {e}")
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
-
 
 
 
@@ -345,6 +343,7 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
+
 
 
 
