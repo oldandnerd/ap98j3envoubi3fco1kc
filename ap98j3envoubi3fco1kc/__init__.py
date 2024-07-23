@@ -58,7 +58,7 @@ def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 def is_within_timeframe_seconds(created_utc, max_oldness_seconds):
-    buffer_seconds = max_oldness_seconds * 0.85  # Apply 15% buffer
+    buffer_seconds = max_oldness_seconds * 0.80  # Apply 20% buffer
     current_time = datetime.now(timezone.utc).timestamp()
     return (current_time - created_utc) <= buffer_seconds
 
