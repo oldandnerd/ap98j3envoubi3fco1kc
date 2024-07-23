@@ -68,39 +68,59 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             post_kind = post.get('kind')
             post_info = post.get('data', {})
 
-            if post_kind == 't3':
+            if post_kind == 't3':  # Ensuring it's a post
                 post_title = post_info.get('title', '[no title]')
-                post_comments_url = f"https://www.reddit.com{post_info.get('permalink', '')}.json"
-                comments_json = await fetch_with_proxy(session, post_comments_url)
-                
-                comments = comments_json[1]['data']['children'] if len(comments_json) > 1 else []
+                post_created_at = post_info.get('created_utc', 0)
+                post_url = f"https://reddit.com{post_info.get('permalink', '')}"
+                post_external_id = post_info.get('id', '')
 
-                for comment in comments:
+                if not is_within_timeframe_seconds(post_created_at, max_oldness_seconds):
+                    continue
+
+                # Process the post itself
+                post_content = post_info.get('selftext', '[no content]')
+                if len(post_content) >= min_post_length:
+                    item = Item(
+                        content=Content(post_content),
+                        author=Author(hashlib.sha1(bytes(post_info.get('author', '[unknown]'), encoding="utf-8")).hexdigest()),
+                        created_at=CreatedAt(format_timestamp(post_created_at)),
+                        title=Title(post_title),
+                        domain=Domain("reddit.com"),
+                        url=Url(post_url),
+                    )
+
+                    yield item
+                    items_collected += 1
                     if items_collected >= maximum_items_to_collect:
                         break
-                    if comment['kind'] == 't1':
-                        comment_data = comment['data']
-                        comment_content = comment_data.get('body', '[deleted]')
-                        comment_author = comment_data.get('author', '[unknown]')
-                        comment_created_at = comment_data['created_utc']
-                        comment_url = f"https://reddit.com{comment_data['permalink']}"
-                        comment_external_id = comment_data['id']
-                        comment_external_parent_id = comment_data.get('parent_id')
 
-                        if (len(comment_content) >= min_post_length and
-                            is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
+                # Process the comments
+                if 'replies' in post_info and isinstance(post_info['replies'], dict):
+                    comments = post_info['replies'].get('data', {}).get('children', [])
+                    for comment in comments:
+                        if items_collected >= maximum_items_to_collect:
+                            break
+                        if comment['kind'] == 't1':
+                            comment_data = comment['data']
+                            comment_content = comment_data.get('body', '[deleted]')
+                            comment_author = comment_data.get('author', '[unknown]')
+                            comment_created_at = comment_data.get('created_utc', 0)
+                            comment_url = f"https://reddit.com{comment_data.get('permalink', '')}"
 
-                            item = Item(
-                                content=Content(comment_content),
-                                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                                created_at=CreatedAt(format_timestamp(comment_created_at)),
-                                title=Title(post_title),
-                                domain=Domain("reddit.com"),
-                                url=Url(comment_url),
-                            )
+                            if (len(comment_content) >= min_post_length and
+                                is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
 
-                            yield item
-                            items_collected += 1
+                                item = Item(
+                                    content=Content(comment_content),
+                                    author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                                    created_at=CreatedAt(format_timestamp(comment_created_at)),
+                                    title=Title(post_title),
+                                    domain=Domain("reddit.com"),
+                                    url=Url(comment_url),
+                                )
+
+                                yield item
+                                items_collected += 1
 
 # Example usage:
 # parameters = {
