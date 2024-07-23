@@ -439,21 +439,12 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
                 selected_function = scrap_subreddit_json
                 if random.random() < new_layout_scraping_weight:
                     selected_function = scrap_subreddit_new_layout
-                if random.random() < new_layout_scraping_weight:
-                    async for result in scrap_subreddit_parallel(session, subreddit_url, yielded_items, MAXIMUM_ITEMS_TO_COLLECT, batch_size):
-                        result = post_process_item(result)
-                        if is_valid_item(result, min_post_length):
-                            logging.info(f"[Reddit] Found Reddit comment: {result}")
-                            yield result
-                            yielded_items += 1
-                        if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
-                            break
-                else:
-                    async for result in selected_function(session, subreddit_url, yielded_items, MAXIMUM_ITEMS_TO_COLLECT):
-                        result = post_process_item(result)
-                        if is_valid_item(result, min_post_length):
-                            logging.info(f"[Reddit] Found Reddit comment: {result}")
-                            yield result
-                            yielded_items += 1
-                        if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
-                            break
+                async for result in selected_function(session, subreddit_url, yielded_items, MAXIMUM_ITEMS_TO_COLLECT):
+                    result = post_process_item(result)
+                    if is_valid_item(result, min_post_length):
+                        logging.info(f"[Reddit] Found Reddit comment: {result}")
+                        yield result
+                        yielded_items += 1
+                    if yielded_items >= MAXIMUM_ITEMS_TO_COLLECT:
+                        break
+
