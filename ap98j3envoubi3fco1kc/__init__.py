@@ -133,12 +133,13 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         subreddit_urls = url_response['urls']
 
-        tasks = [asyncio.create_task(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length)) for subreddit_url in subreddit_urls]
+        tasks = []
+        for subreddit_url in subreddit_urls:
+            if not subreddit_url.endswith('.json'):
+                subreddit_url = subreddit_url.rstrip('/') + '/.json'
+            tasks.append(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length))
 
-        try:
-            await asyncio.gather(*tasks)
-        except asyncio.CancelledError:
-            logging.info("[Reddit] Tasks cancelled, stopping fetches.")
+        await asyncio.gather(*tasks)
 
         try:
             for index, item in enumerate(collector.items, start=1):
@@ -146,10 +147,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 yield item
         except GeneratorExit:
             logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            raise
+            return
 
 # Example usage:
 # parameters = {
