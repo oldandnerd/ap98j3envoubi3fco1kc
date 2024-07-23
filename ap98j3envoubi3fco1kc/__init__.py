@@ -21,9 +21,13 @@ USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 
 async def fetch_with_proxy(session, url):
     headers = {'User-Agent': USER_AGENT}
-    async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
-        response.raise_for_status()
-        return await response.json()
+    try:
+        async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
+            response.raise_for_status()
+            return await response.json()
+    except Exception as e:
+        logging.error(f"Error fetching URL {url}: {e}")
+        return None
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -39,6 +43,10 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
     async with aiohttp.ClientSession() as session:
         url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_url')
+        if not url_response or 'url' not in url_response:
+            logging.error("Failed to get subreddit URL from proxy")
+            return
+
         subreddit_url = url_response['url']
         
         # Ensure the URL ends with .json
@@ -104,10 +112,16 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                                     url=Url(comment_url),
                                 )
 
-                                print("Comment found:")
-                                print(item)
+                                logging.info("Comment found:")
+                                logging.info(item)
                                 yield item
                                 items_collected += 1
+                            else:
+                                logging.info(f"Comment skipped due to length or timeframe: {comment_content}")
+
+                logging.info(f"Processed post: {post_title}")
+
+        logging.info(f"Total items collected: {items_collected}")
 
 # Example usage:
 # parameters = {
