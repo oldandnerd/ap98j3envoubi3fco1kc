@@ -3,7 +3,7 @@ import asyncio
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict
 from exorde_data import (
     Item,
     Content,
@@ -141,13 +141,13 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         await asyncio.gather(*tasks)
 
-        for index, item in enumerate(collector.items, start=1):
-            try:
+        try:
+            for index, item in enumerate(collector.items, start=1):
                 logging.info(f"Found comment {index}: {item}")
                 yield item
-            except GeneratorExit:
-                logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
-                return
+        except GeneratorExit:
+            logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
+            return
 
 # Example usage:
 # parameters = {
