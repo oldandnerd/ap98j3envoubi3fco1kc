@@ -25,14 +25,20 @@ class CommentCollector:
         self.max_items = max_items
         self.items = []
         self.lock = asyncio.Lock()
+        self.stop_fetching = False
 
     async def add_item(self, item):
         async with self.lock:
             if self.total_items_collected < self.max_items:
                 self.items.append(item)
                 self.total_items_collected += 1
+                if self.total_items_collected >= self.max_items:
+                    self.stop_fetching = True
                 return True
             return False
+
+    def should_stop_fetching(self):
+        return self.stop_fetching
 
 async def fetch_with_proxy(session, url):
     headers = {'User-Agent': USER_AGENT}
@@ -77,7 +83,6 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                     )
 
                     if not await collector.add_item(item):
-                        logging.info("Maximum items collected, stopping further fetches.")
                         return
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length):
@@ -95,6 +100,9 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
     posts = response_json['data']['children']
 
     for post in posts:
+        if collector.should_stop_fetching():
+            return
+
         post_kind = post.get('kind')
         post_info = post.get('data', {})
 
@@ -102,9 +110,8 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
             post_permalink = post_info.get('permalink')
             if post_permalink:
                 await fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length)
-                if collector.total_items_collected >= collector.max_items:
-                    logging.info("Maximum items collected, stopping fetches for posts.")
-                    break
+                if collector.should_stop_fetching():
+                    return
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
@@ -128,18 +135,14 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 subreddit_url = subreddit_url.rstrip('/') + '/.json'
             tasks.append(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length))
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Handle exceptions and log them
-        for result in results:
-            if isinstance(result, Exception):
-                logging.error(f"Error during fetch_posts execution: {result}")
+        await asyncio.gather(*tasks)
 
         for item in collector.items:
             try:
+                logging.info(f"Found comment {collector.total_items_collected}: {item}")
                 yield item
             except GeneratorExit:
-                logging.info(f"[Reddit] GeneratorExit caught, stopping the generator.")
+                logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
                 return
 
 # Example usage:
