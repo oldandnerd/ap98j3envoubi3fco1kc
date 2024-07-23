@@ -125,6 +125,21 @@ async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3)
     return None
 
 
+def parse_comments(comments):
+    parsed_comments = []
+    for comment in comments:
+        if comment['kind'] == 't1':
+            comment_data = comment['data']
+            parsed_comments.append({
+                'content': comment_data.get('body', '[deleted]'),
+                'author': comment_data.get('author', '[unknown]'),
+                'created_at': datett.fromtimestamp(comment_data['created_utc'], tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'domain': 'reddit.com',
+                'url': f"https://reddit.com{comment_data['permalink']}"
+            })
+    return parsed_comments
+
+
 async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
@@ -176,20 +191,6 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             yield item_
             count += 1
 
-    async def more(data) -> AsyncGenerator[Item, None]:
-        for __item__ in []:
-            yield Item()
-
-    async def listing(data) -> AsyncGenerator[Item, None]:
-        nonlocal count
-        for item_data in data["data"]["children"]:
-            if count >= limit:
-                break
-            async for item in kind(item_data):
-                if count < limit:
-                    yield item
-                    count += 1
-
     async def kind(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         if count >= limit:
@@ -211,15 +212,14 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         except Exception as err:
             raise err
 
-    resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
-    _url = url + ".json"
-    logging.info(f"[Reddit] Scraping - getting {_url}")
+    resolvers = {"t1": comment, "t3": post}
 
     try:
-        response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)})
+        response_json = await fetch_with_retry(session, url, headers={"User-Agent": random.choice(USER_AGENT_LIST)})
         if not response_json:
             return
         [_post, comments] = response_json
+
         try:
             async for item in kind(_post):
                 if count < limit:
@@ -229,21 +229,34 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             logging.info(f"[Reddit] GeneratorExit caught in scrap_post() - _post")
             return
         except Exception as e:
-            logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
+            logging.exception(f"[Reddit] An error occurred on {url}: {e}")
 
         try:
-            for result in comments["data"]["children"]:
-                async for item in kind(result):
-                    if count < limit:
-                        yield item
-                        count += 1
+            parsed_comments = parse_comments(comments["data"]["children"])
+            for comment in parsed_comments:
+                if count >= limit:
+                    break
+                item_ = Item(
+                    content=Content(comment["content"]),
+                    author=Author(hashlib.sha1(bytes(comment["author"], encoding="utf-8")).hexdigest()),
+                    created_at=CreatedAt(comment["created_at"]),
+                    domain=Domain(comment["domain"]),
+                    url=Url(comment["url"]),
+                )
+                if len(tokenizer.encode(item_.content).tokens) > 512:
+                    logging.info(f"[Reddit] Skipping comment with more than 512 tokens")
+                    continue
+                if count < limit:
+                    yield item_
+                    count += 1
         except GeneratorExit:
             logging.info(f"[Reddit] GeneratorExit caught in scrap_post() - comments")
             return
         except Exception as e:
-            logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
+            logging.exception(f"[Reddit] An error occurred on {url}: {e}")
     except aiohttp.ClientError as e:
-        logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
+        logging.error(f"[Reddit] Failed to fetch {url}: {e}")
+
 
 
 async def fetch_multiple_posts(session: ClientSession, urls: list, limit: int) -> AsyncGenerator[Item, None]:
