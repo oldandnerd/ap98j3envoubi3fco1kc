@@ -55,7 +55,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         logging.info(f"Fetched URL from proxy: {subreddit_url}")
 
-        response_json = await fetch_with_proxy(session, f"{subreddit_url}?limit=1000")
+        response_json = await fetch_with_proxy(session, subreddit_url)
 
         if not response_json:
             logging.error("Response JSON is empty or invalid")
@@ -68,6 +68,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         posts = response_json['data']['children']
         items_collected = 0
+        comments_skipped = 0
 
         for post in posts:
             if items_collected >= maximum_items_to_collect:
@@ -107,7 +108,9 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                             yield item
                             items_collected += 1
                         else:
-                            logging.info(f"Comment skipped due to length or timeframe: {comment_content}")
+                            comments_skipped += 1
+
+        logging.info(f"Total comments skipped due to oldness: {comments_skipped}")
 
 # Example usage:
 # parameters = {
