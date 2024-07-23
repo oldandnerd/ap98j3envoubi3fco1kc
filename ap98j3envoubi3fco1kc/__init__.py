@@ -50,7 +50,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         subreddit_url = url_response['url']
         
         # Ensure the URL ends with .json
-        if not subreddit_url.endswith('/.json'):
+        if not subreddit_url.endswith('.json'):
             subreddit_url = subreddit_url.rstrip('/') + '/.json'
 
         logging.info(f"Fetched URL from proxy: {subreddit_url}")
@@ -79,36 +79,41 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
             if post_kind == 't3':
                 post_title = post_info.get('title', '[no title]')
-                
-                comments = post_info.get('comments', {}).get('data', {}).get('children', [])
-                
-                for comment in comments:
-                    if items_collected >= maximum_items_to_collect:
-                        break
-                    if comment['kind'] == 't1':
-                        comment_data = comment['data']
-                        comment_content = comment_data.get('body', '[deleted]')
-                        comment_author = comment_data.get('author', '[unknown]')
-                        comment_created_at = comment_data['created_utc']
-                        comment_url = f"https://reddit.com{comment_data['permalink']}"
+                post_permalink = post_info.get('permalink')
 
-                        if (len(comment_content) >= min_post_length and
-                            is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
+                if post_permalink:
+                    comments_url = f"https://www.reddit.com{post_permalink}.json"
+                    comments_json = await fetch_with_proxy(session, comments_url)
+                    if comments_json and len(comments_json) > 1:
+                        comments = comments_json[1]['data']['children']
+                        
+                        for comment in comments:
+                            if items_collected >= maximum_items_to_collect:
+                                break
+                            if comment['kind'] == 't1':
+                                comment_data = comment['data']
+                                comment_content = comment_data.get('body', '[deleted]')
+                                comment_author = comment_data.get('author', '[unknown]')
+                                comment_created_at = comment_data['created_utc']
+                                comment_url = f"https://reddit.com{comment_data['permalink']}"
 
-                            item = Item(
-                                content=Content(comment_content),
-                                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                                created_at=CreatedAt(format_timestamp(comment_created_at)),
-                                title=Title(post_title),
-                                domain=Domain("reddit.com"),
-                                url=Url(comment_url),
-                            )
+                                if (len(comment_content) >= min_post_length and
+                                    is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
 
-                            logging.info("Comment found: %s", item)
-                            yield item
-                            items_collected += 1
-                        else:
-                            comments_skipped += 1
+                                    item = Item(
+                                        content=Content(comment_content),
+                                        author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                                        created_at=CreatedAt(format_timestamp(comment_created_at)),
+                                        title=Title(post_title),
+                                        domain=Domain("reddit.com"),
+                                        url=Url(comment_url),
+                                    )
+
+                                    logging.info("Comment found: %s", item)
+                                    yield item
+                                    items_collected += 1
+                                else:
+                                    comments_skipped += 1
 
         logging.info(f"Total comments skipped due to oldness: {comments_skipped}")
 
