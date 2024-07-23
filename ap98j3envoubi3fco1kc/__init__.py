@@ -116,15 +116,11 @@ async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3)
     for attempt in range(retries):
         try:
             async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers, timeout=BASE_TIMEOUT) as response:
-                if response.headers.get("Content-Type") == "application/json":
-                    response.raise_for_status()
-                    return await response.json()
-                else:
-                    logging.error(f"[Reddit] Attempt to decode JSON with unexpected mimetype: {response.headers.get('Content-Type')}")
-                    return None
+                response.raise_for_status()
+                return await response.json()
         except aiohttp.ClientError as e:
             logging.warning(f"[Retry {attempt + 1}/{retries}] Request failed: {e}. Retrying...")
-            await asyncio.sleep(backoff_factor * (2 ** attempt))
+        await asyncio.sleep(backoff_factor * (2 ** attempt))
     logging.error(f"[Reddit] Failed to fetch {url} after {retries} attempts")
     return None
 
@@ -136,102 +132,118 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
     async def post(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         content = data["data"]
+        created_utc = content["created_utc"]
+
+        if not is_within_timeframe_seconds(created_utc, MAX_EXPIRATION_SECONDS):
+            logging.info(f"[Reddit] Skipping old post: {url}")
+            return
+
         item_ = Item(
             content=Content(content["selftext"]),
-            author=Author(
-                hashlib.sha1(
-                    bytes(content["author"], encoding="utf-8")
-                ).hexdigest()
-            ),
-            created_at=CreatedAt(
-                str(format_timestamp(content["created_utc"]))
-            ),
+            author=Author(hashlib.sha1(bytes(content["author"], encoding="utf-8")).hexdigest()),
+            created_at=CreatedAt(str(format_timestamp(created_utc))),
             title=Title(content["title"]),
             domain=Domain("reddit.com"),
             url=Url("https://reddit.com" + content["permalink"]),
         )
-        if is_within_timeframe_seconds(
-            content["created_utc"], MAX_EXPIRATION_SECONDS
-        ):
-            if count < limit:
-                count += 1
-                yield item_
+        if len(tokenizer.encode(item_.content).tokens) > 512:
+            logging.info(f"[Reddit] Skipping post with more than 512 tokens")
+            return
+        if count < limit:
+            yield item_
+            count += 1
 
     async def comment(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         content = data["data"]
+        created_utc = content["created_utc"]
+
+        if not is_within_timeframe_seconds(created_utc, MAX_EXPIRATION_SECONDS):
+            logging.info(f"[Reddit] Skipping old comment: {url}")
+            return
+
         item_ = Item(
             content=Content(content["body"]),
-            author=Author(
-                hashlib.sha1(
-                    bytes(content["author"], encoding="utf-8")
-                ).hexdigest()
-            ),
-            created_at=CreatedAt(
-                str(format_timestamp(content["created_utc"]))
-            ),
+            author=Author(hashlib.sha1(bytes(content["author"], encoding="utf-8")).hexdigest()),
+            created_at=CreatedAt(str(format_timestamp(created_utc))),
             domain=Domain("reddit.com"),
             url=Url("https://reddit.com" + content["permalink"]),
         )
-        if is_within_timeframe_seconds(
-            content["created_utc"], MAX_EXPIRATION_SECONDS
-        ):
-            if count < limit:
-                count += 1
-                yield item_
+        if len(tokenizer.encode(item_.content).tokens) > 512:
+            logging.info(f"[Reddit] Skipping comment with more than 512 tokens")
+            return
+        if count < limit:
+            yield item_
+            count += 1
 
-    async def more(__data__):
+    async def more(data) -> AsyncGenerator[Item, None]:
         for __item__ in []:
             yield Item()
 
+    async def listing(data) -> AsyncGenerator[Item, None]:
+        nonlocal count
+        for item_data in data["data"]["children"]:
+            if count >= limit:
+                break
+            async for item in kind(item_data):
+                if count < limit:
+                    yield item
+                    count += 1
+
     async def kind(data) -> AsyncGenerator[Item, None]:
+        nonlocal count
+        if count >= limit:
+            return
         if not isinstance(data, dict):
             return
         resolver = resolvers.get(data["kind"], None)
         if not resolver:
-            raise NotImplementedError(f"{data['kind']} is not implemented")
+            logging.warning(f"[Reddit] {data['kind']} is not implemented. Skipping...")
+            return
         try:
             async for item in resolver(data):
-                yield item
+                if count < limit:
+                    yield item
+                    count += 1
+        except GeneratorExit:
+            logging.info(f"[Reddit] GeneratorExit caught in kind()")
+            return
         except Exception as err:
             raise err
 
-    async def listing(data) -> AsyncGenerator[Item, None]:
-        for item_data in data["data"]["children"]:
-            async for item in kind(item_data):
-                yield item
-
     resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
+    _url = url + ".json"
+    logging.info(f"[Reddit] Scraping - getting {_url}")
+
     try:
-        _url = url + ".json"
-        logging.info(f"[Reddit] Scraping - getting {_url}")
         response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)})
-        if response_json is None:
+        if not response_json:
             return
         [_post, comments] = response_json
         try:
             async for item in kind(_post):
-                yield item
+                if count < limit:
+                    yield item
+                    count += 1
         except GeneratorExit:
-            logging.info("[Reddit] Scraper generator exit...")
+            logging.info(f"[Reddit] GeneratorExit caught in scrap_post() - _post")
             return
         except Exception as e:
-            logging.exception(f"An error occurred on {_url}: {e}")
+            logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
 
         try:
-            async for item in listing(comments):
-                yield item
+            for result in comments["data"]["children"]:
+                async for item in kind(result):
+                    if count < limit:
+                        yield item
+                        count += 1
         except GeneratorExit:
-            logging.info("[Reddit] Scraper generator exit...")
+            logging.info(f"[Reddit] GeneratorExit caught in scrap_post() - comments")
             return
         except Exception as e:
-            logging.exception(f"An error occurred on {_url}: {e}")
+            logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
-
-
-
-
 
 
 async def fetch_multiple_posts(session: ClientSession, urls: list, limit: int) -> AsyncGenerator[Item, None]:
@@ -340,7 +352,6 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
-
 
 
 
