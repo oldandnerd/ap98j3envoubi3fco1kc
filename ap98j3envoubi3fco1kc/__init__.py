@@ -112,16 +112,11 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                                     url=Url(comment_url),
                                 )
 
-                                logging.info("Comment found:")
-                                logging.info(item)
+                                logging.info("Comment found: %s", item)
                                 yield item
                                 items_collected += 1
                             else:
                                 logging.info(f"Comment skipped due to length or timeframe: {comment_content}")
-
-               # logging.info(f"Processed post: {post_title}")
-
-        #logging.info(f"Total items collected: {items_collected}")
 
 # Example usage:
 # parameters = {
