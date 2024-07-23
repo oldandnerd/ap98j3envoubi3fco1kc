@@ -61,6 +61,22 @@ def is_within_timeframe_seconds(created_utc, max_oldness_seconds):
     current_time = datetime.now(timezone.utc).timestamp()
     return (current_time - created_utc) <= max_oldness_seconds
 
+def get_age_string(created_utc):
+    current_time = datetime.now(timezone.utc).timestamp()
+    age_seconds = current_time - created_utc
+    age_minutes = age_seconds // 60
+    age_hours = age_minutes // 60
+    age_days = age_hours // 24
+
+    if age_days > 0:
+        return f"{int(age_days)} days old"
+    elif age_hours > 0:
+        return f"{int(age_hours)} hours old"
+    elif age_minutes > 0:
+        return f"{int(age_minutes)} minutes old"
+    else:
+        return f"{int(age_seconds)} seconds old"
+
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length):
     comments_url = f"https://www.reddit.com{post_permalink}.json"
     comments_json = await fetch_with_proxy(session, comments_url)
@@ -139,13 +155,15 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 subreddit_url = subreddit_url.rstrip('/') + '/.json'
             tasks.append(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length))
 
-        task_group = asyncio.gather(*tasks)
+        task_group = asyncio.gather(*tasks, return_exceptions=True)
 
         try:
             await task_group
 
             for index, item in enumerate(collector.items, start=1):
-                logging.info(f"Found comment {index}: {item}")
+                created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
+                age_string = get_age_string(created_at_timestamp)
+                logging.info(f"Found comment {index} and it's {age_string}: {item}")
                 yield item
         except GeneratorExit:
             logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
