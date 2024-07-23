@@ -104,7 +104,7 @@ def split_strings_subreddit_name(input_string):
     words.append(input_string[start:])
     return ' '.join(words)
 
-async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3):
+async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.5):
     for attempt in range(retries):
         try:
             async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers, timeout=BASE_TIMEOUT) as response:
@@ -115,6 +115,7 @@ async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3)
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     logging.error(f"[Reddit] Failed to fetch {url} after {retries} attempts")
     return None
+
 
 async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
