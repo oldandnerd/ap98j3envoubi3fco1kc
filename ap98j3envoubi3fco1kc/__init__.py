@@ -1,6 +1,6 @@
 import random
 import aiohttp
-from aiohttp import ClientSession
+from aiohttp import ClientSession, TCPConnector
 import asyncio
 from typing import AsyncGenerator
 import time
@@ -115,6 +115,7 @@ async def fetch_with_retry(session, url, headers, retries=5, backoff_factor=0.3)
         await asyncio.sleep(backoff_factor * (2 ** attempt))
     logging.error(f"[Reddit] Failed to fetch {url} after {retries} attempts")
     return None
+
 
 async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
@@ -257,6 +258,7 @@ async def fetch_multiple_posts(session: ClientSession, urls: list, limit: int) -
                     yield item
                     count += 1
 
+
 async def scrap_subreddit_parallel(session: ClientSession, subreddit_url: str, count: int, limit: int, batch_size: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
@@ -297,6 +299,7 @@ async def scrap_subreddit_parallel(session: ClientSession, subreddit_url: str, c
         logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
 
 
+
 async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
@@ -318,30 +321,26 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
 
         permalinks = list(find_permalinks(response_json))
 
-        for permalink in permalinks:
-            if count >= limit:
-                break
-            try:
-                if random.random() < SKIP_POST_PROBABILITY:
-                    continue
-                url = permalink
-                if "https" not in url:
-                    url = f"https://reddit.com{url}"
-                async for item in scrap_post(session, url, count, limit):
-                    if count < limit:
-                        yield item
-                        count += 1
-            except GeneratorExit:
-                logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_json() - permalink: {permalink}")
-                return
-            except Exception as e:
-                logging.exception(f"[Reddit] [JSON MODE] Error detected: {e}")
+        for i in range(0, len(permalinks), limit):
+            batch_permalinks = permalinks[i:i + limit]
+            tasks = [scrap_post(session, permalink, count, limit) for permalink in batch_permalinks]
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logging.exception(f"[Reddit] An error occurred: {result}")
+                else:
+                    async for item in result:
+                        if count < limit:
+                            yield item
+                            count += 1
 
     except GeneratorExit:
         logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_json()")
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
+
 
 
 
@@ -439,7 +438,8 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
 
     await asyncio.sleep(random.uniform(3, 15))
 
-    async with aiohttp.ClientSession() as session:
+    connector = TCPConnector(limit_per_host=10)
+    async with aiohttp.ClientSession(connector=connector) as session:
         for i in range(nb_subreddit_attempts):
             await asyncio.sleep(random.uniform(1, i))
             url_response = await get_subreddit_url()
