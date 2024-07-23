@@ -70,7 +70,10 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
             if post_kind == 't3':
                 post_title = post_info.get('title', '[no title]')
-                comments = response_json[1]['data']['children'] if len(response_json) > 1 else []
+                comments = []
+                
+                if 'data' in response_json and len(response_json['data']['children']) > 1:
+                    comments = response_json['data']['children'][1]['data']['children']
                 
                 for comment in comments:
                     if items_collected >= maximum_items_to_collect:
@@ -105,3 +108,4 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 #     'maximum_items_to_collect': 10,
 #     'min_post_length': 10
 # }
+# asyncio.run(query(parameters))
