@@ -139,15 +139,19 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 subreddit_url = subreddit_url.rstrip('/') + '/.json'
             tasks.append(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length))
 
-        await asyncio.gather(*tasks)
+        task_group = asyncio.gather(*tasks)
 
         try:
+            await task_group
+
             for index, item in enumerate(collector.items, start=1):
                 logging.info(f"Found comment {index}: {item}")
                 yield item
         except GeneratorExit:
             logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
-            return
+            task_group.cancel()  # Cancel all ongoing tasks
+            await asyncio.gather(task_group, return_exceptions=True)  # Ensure all tasks are properly cancelled
+            raise  # Re-raise GeneratorExit to properly close the generator
 
 # Example usage:
 # parameters = {
