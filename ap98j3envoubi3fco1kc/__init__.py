@@ -3,7 +3,7 @@ import asyncio
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Dict
+from typing import AsyncGenerator, Dict, List
 from exorde_data import (
     Item,
     Content,
@@ -139,7 +139,10 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 subreddit_url = subreddit_url.rstrip('/') + '/.json'
             tasks.append(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length))
 
-        await asyncio.gather(*tasks)
+        try:
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            logging.info("[Reddit] Tasks cancelled, stopping fetches.")
 
         try:
             for index, item in enumerate(collector.items, start=1):
@@ -147,7 +150,9 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 yield item
         except GeneratorExit:
             logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
-            return
+            for task in tasks:
+                task.cancel()
+            raise
 
 # Example usage:
 # parameters = {
