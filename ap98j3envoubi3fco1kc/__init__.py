@@ -1,3 +1,4 @@
+# WOkring in prodction
 import random
 import aiohttp
 from aiohttp import ClientSession, TCPConnector
@@ -128,7 +129,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
     if count >= limit:
         return
 
-    async def post(data) -> AsyncGenerator[Item, None]:
+    async def process_post(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         content = data["data"]
         created_utc = content["created_utc"]
@@ -138,7 +139,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             return
 
         item_ = Item(
-            content=Content(content["selftext"]),
+            content=Content(content.get("selftext", "")),
             author=Author(hashlib.sha1(bytes(content["author"], encoding="utf-8")).hexdigest()),
             created_at=CreatedAt(str(format_timestamp(created_utc))),
             title=Title(content["title"]),
@@ -152,7 +153,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             yield item_
             count += 1
 
-    async def comment(data) -> AsyncGenerator[Item, None]:
+    async def process_comment(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         content = data["data"]
         created_utc = content["created_utc"]
@@ -175,21 +176,17 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             yield item_
             count += 1
 
-    async def more(data) -> AsyncGenerator[Item, None]:
-        for __item__ in []:
-            yield Item()
-
-    async def listing(data) -> AsyncGenerator[Item, None]:
+    async def process_listing(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         for item_data in data["data"]["children"]:
             if count >= limit:
                 break
-            async for item in kind(item_data):
+            async for item in process_kind(item_data):
                 if count < limit:
                     yield item
                     count += 1
 
-    async def kind(data) -> AsyncGenerator[Item, None]:
+    async def process_kind(data) -> AsyncGenerator[Item, None]:
         nonlocal count
         if count >= limit:
             return
@@ -205,12 +202,12 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
                     yield item
                     count += 1
         except GeneratorExit:
-            logging.info(f"[Reddit] GeneratorExit caught in kind()")
+            logging.info(f"[Reddit] GeneratorExit caught in process_kind()")
             return
         except Exception as err:
             raise err
 
-    resolvers = {"Listing": listing, "t1": comment, "t3": post, "more": more}
+    resolvers = {"Listing": process_listing, "t1": process_comment, "t3": process_post}
     _url = url + ".json"
     logging.info(f"[Reddit] Scraping - getting {_url}")
 
@@ -218,31 +215,25 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         response_json = await fetch_with_retry(session, _url, headers={"User-Agent": random.choice(USER_AGENT_LIST)})
         if not response_json:
             return
-        [_post, comments] = response_json
-        try:
-            async for item in kind(_post):
+        post_data, comments_data = response_json
+
+        # Process the post
+        async for item in process_kind(post_data):
+            if count < limit:
+                yield item
+                count += 1
+
+        # Process comments
+        async for comment in comments_data["data"]["children"]:
+            async for item in process_kind(comment):
                 if count < limit:
                     yield item
                     count += 1
-        except GeneratorExit:
-            logging.info(f"[Reddit] GeneratorExit caught in scrap_post() - _post")
-            return
-        except Exception as e:
-            logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
 
-        try:
-            for result in comments["data"]["children"]:
-                async for item in kind(result):
-                    if count < limit:
-                        yield item
-                        count += 1
-        except GeneratorExit:
-            logging.info(f"[Reddit] GeneratorExit caught in scrap_post() - comments")
-            return
-        except Exception as e:
-            logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
+
+
 
 
 async def fetch_multiple_posts(session: ClientSession, urls: list, limit: int) -> AsyncGenerator[Item, None]:
@@ -447,7 +438,7 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     logging.info(f"[Reddit] Input parameters: {parameters}")
     MAX_EXPIRATION_SECONDS = max_oldness_seconds
     yielded_items = 0
-    batch_size = 60  # You can adjust this batch size as needed
+    batch_size = 20  # You can adjust this batch size as needed
 
     await asyncio.sleep(random.uniform(3, 15))
 
