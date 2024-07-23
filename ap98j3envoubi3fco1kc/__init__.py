@@ -78,6 +78,11 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             posts = response_json['data']['children']
             after = response_json['data'].get('after')
 
+            # Stop if there are no more posts to fetch
+            if len(posts) < 100:
+                logging.info("Less than 100 posts fetched, no more posts to retrieve.")
+                break
+
             for post in posts:
                 if items_collected >= maximum_items_to_collect:
                     break
