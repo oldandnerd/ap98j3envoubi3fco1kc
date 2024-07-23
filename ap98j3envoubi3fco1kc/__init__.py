@@ -2,7 +2,6 @@ import aiohttp
 import asyncio
 import hashlib
 import logging
-import random
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict
 from exorde_data import (
@@ -35,7 +34,7 @@ def is_within_timeframe_seconds(created_utc, max_oldness_seconds):
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
-    maximum_items_to_collect = parameters.get('maximum_items_to_collect')
+    maximum_items_to_collect = min(parameters.get('maximum_items_to_collect'), 1000)
     min_post_length = parameters.get('min_post_length')
 
     async with aiohttp.ClientSession() as session:
@@ -48,57 +47,67 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         logging.info(f"Fetched URL from proxy: {subreddit_url}")
 
-        response_json = await fetch_with_proxy(session, subreddit_url)
-
-        if not response_json:
-            logging.error("Response JSON is empty or invalid")
-            return
-
-        # Check the structure of the response JSON
-        if 'data' not in response_json or 'children' not in response_json['data']:
-            logging.error("Unexpected JSON structure")
-            return
-
-        post_data = response_json['data']['children']
+        all_posts = []
+        after = None
         items_collected = 0
 
-        for post in post_data:
-            if items_collected >= maximum_items_to_collect:
+        while items_collected < maximum_items_to_collect:
+            params = {'limit': 100}
+            if after:
+                params['after'] = after
+
+            response_json = await fetch_with_proxy(session, f"{subreddit_url}?limit=100&after={after}")
+
+            if not response_json:
+                logging.error("Response JSON is empty or invalid")
                 break
-            post_kind = post.get('kind')
-            post_info = post.get('data', {})
 
-            if post_kind == 't3':
-                post_title = post_info.get('title', '[no title]')
-                post_comments_url = f"https://www.reddit.com{post_info.get('permalink', '')}.json"
-                comments_json = await fetch_with_proxy(session, post_comments_url)
-                
-                comments = comments_json[1]['data']['children'] if len(comments_json) > 1 else []
+            # Check the structure of the response JSON
+            if 'data' not in response_json or 'children' not in response_json['data']:
+                logging.error("Unexpected JSON structure")
+                break
 
-                for comment in comments:
-                    if items_collected >= maximum_items_to_collect:
-                        break
-                    if comment['kind'] == 't1':
-                        comment_data = comment['data']
-                        comment_content = comment_data.get('body', '[deleted]')
-                        comment_author = comment_data.get('author', '[unknown]')
-                        comment_created_at = comment_data['created_utc']
-                        comment_url = f"https://reddit.com{comment_data['permalink']}"
+            posts = response_json['data']['children']
+            after = response_json['data'].get('after')
 
-                        if (len(comment_content) >= min_post_length and
-                            is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
+            for post in posts:
+                if items_collected >= maximum_items_to_collect:
+                    break
 
-                            item = Item(
-                                content=Content(comment_content),
-                                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                                created_at=CreatedAt(format_timestamp(comment_created_at)),
-                                title=Title(post_title),
-                                domain=Domain("reddit.com"),
-                                url=Url(comment_url),
-                            )
+                post_kind = post.get('kind')
+                post_info = post.get('data', {})
 
-                            yield item
-                            items_collected += 1
+                if post_kind == 't3':
+                    post_title = post_info.get('title', '[no title]')
+                    
+                    comments = post_info.get('comments', {}).get('data', {}).get('children', [])
+                    
+                    for comment in comments:
+                        if items_collected >= maximum_items_to_collect:
+                            break
+                        if comment['kind'] == 't1':
+                            comment_data = comment['data']
+                            comment_content = comment_data.get('body', '[deleted]')
+                            comment_author = comment_data.get('author', '[unknown]')
+                            comment_created_at = comment_data['created_utc']
+                            comment_url = f"https://reddit.com{comment_data['permalink']}"
+
+                            if (len(comment_content) >= min_post_length and
+                                is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
+
+                                item = Item(
+                                    content=Content(comment_content),
+                                    author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                                    created_at=CreatedAt(format_timestamp(comment_created_at)),
+                                    title=Title(post_title),
+                                    domain=Domain("reddit.com"),
+                                    url=Url(comment_url),
+                                )
+
+                                print("Comment found:")
+                                print(item)
+                                yield item
+                                items_collected += 1
 
 # Example usage:
 # parameters = {
