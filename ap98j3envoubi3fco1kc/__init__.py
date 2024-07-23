@@ -78,60 +78,69 @@ def get_age_string(created_utc):
         return f"{int(age_seconds)} seconds old"
 
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length):
-    comments_url = f"https://www.reddit.com{post_permalink}.json"
-    comments_json = await fetch_with_proxy(session, comments_url)
-    if comments_json and len(comments_json) > 1:
-        comments = comments_json[1]['data']['children']
-        for comment in comments:
-            if comment['kind'] == 't1':
-                comment_data = comment['data']
-                comment_content = comment_data.get('body', '[deleted]')
-                comment_author = comment_data.get('author', '[unknown]')
-                comment_created_at = comment_data['created_utc']
-                comment_url = f"https://reddit.com{comment_data['permalink']}"
+    try:
+        comments_url = f"https://www.reddit.com{post_permalink}.json"
+        comments_json = await fetch_with_proxy(session, comments_url)
+        if comments_json and len(comments_json) > 1:
+            comments = comments_json[1]['data']['children']
+            for comment in comments:
+                if comment['kind'] == 't1':
+                    comment_data = comment['data']
+                    comment_content = comment_data.get('body', '[deleted]')
+                    comment_author = comment_data.get('author', '[unknown]')
+                    comment_created_at = comment_data['created_utc']
+                    comment_url = f"https://reddit.com{comment_data['permalink']}"
 
-                if (len(comment_content) >= min_post_length and
-                    is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
+                    if (len(comment_content) >= min_post_length and
+                        is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
 
-                    item = Item(
-                        content=Content(comment_content),
-                        author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                        created_at=CreatedAt(format_timestamp(comment_created_at)),
-                        title=Title(post_permalink),
-                        domain=Domain("reddit.com"),
-                        url=Url(comment_url),
-                    )
+                        item = Item(
+                            content=Content(comment_content),
+                            author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                            created_at=CreatedAt(format_timestamp(comment_created_at)),
+                            title=Title(post_permalink),
+                            domain=Domain("reddit.com"),
+                            url=Url(comment_url),
+                        )
 
-                    if not await collector.add_item(item):
-                        return
+                        try:
+                            if not await collector.add_item(item):
+                                return
+                        except Exception as e:
+                            logging.error(f"Error adding item: {e}")
+    except Exception as e:
+        logging.error(f"Error fetching comments from {post_permalink}: {e}")
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length):
-    response_json = await fetch_with_proxy(session, subreddit_url)
+    try:
+        response_json = await fetch_with_proxy(session, subreddit_url)
 
-    if not response_json:
-        logging.error("Response JSON is empty or invalid")
-        return
-
-    # Check the structure of the response JSON
-    if 'data' not in response_json or 'children' not in response_json['data']:
-        logging.error("Unexpected JSON structure")
-        return
-
-    posts = response_json['data']['children']
-
-    for post in posts:
-        if collector.should_stop_fetching():
+        if not response_json:
+            logging.error("Response JSON is empty or invalid")
             return
 
-        post_kind = post.get('kind')
-        post_info = post.get('data', {})
+        # Check the structure of the response JSON
+        if 'data' not in response_json or 'children' not in response_json['data']:
+            logging.error("Unexpected JSON structure")
+            return
 
-        if post_kind == 't3':
-            post_permalink = post_info.get('permalink')
-            if post_permalink:
-                await fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length)
-                if collector.should_stop_fetching():
-                    return
+        posts = response_json['data']['children']
+
+        for post in posts:
+            if collector.should_stop_fetching():
+                return
+
+            post_kind = post.get('kind')
+            post_info = post.get('data', {})
+
+            if post_kind == 't3':
+                post_permalink = post_info.get('permalink')
+                if post_permalink:
+                    await fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length)
+                    if collector.should_stop_fetching():
+                        return
+    except Exception as e:
+        logging.error(f"Error fetching posts from {subreddit_url}: {e}")
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
