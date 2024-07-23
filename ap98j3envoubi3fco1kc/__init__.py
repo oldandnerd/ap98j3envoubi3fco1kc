@@ -318,6 +318,8 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
         logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
 
 
+
+
 async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
@@ -349,6 +351,7 @@ async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str,
         return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
+
 
 
 def find_permalinks(data):
