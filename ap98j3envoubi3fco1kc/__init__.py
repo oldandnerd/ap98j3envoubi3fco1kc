@@ -186,6 +186,9 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
                 if count < limit:
                     yield item
                     count += 1
+        except GeneratorExit:
+            logging.info(f"[Reddit] GeneratorExit caught in kind()")
+            return
         except Exception as err:
             raise err
 
@@ -204,7 +207,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
                     yield item
                     count += 1
         except GeneratorExit:
-            logging.info(f"[Reddit] Scraper generator exit...")
+            logging.info(f"[Reddit] GeneratorExit caught in scrap_post() - _post")
             return
         except Exception as e:
             logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
@@ -216,35 +219,46 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
                         yield item
                         count += 1
         except GeneratorExit:
-            logging.info(f"[Reddit] Scraper generator exit...")
+            logging.info(f"[Reddit] GeneratorExit caught in scrap_post() - comments")
             return
         except Exception as e:
             logging.exception(f"[Reddit] An error occurred on {_url}: {e}")
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
 
+
 async def scrap_subreddit(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
-    async with session.get(f'{MANAGER_IP}/proxy?url={subreddit_url}', headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-        html_content = await response.text()
-        html_tree = fromstring(html_content)
-        for post in html_tree.xpath("//shreddit-post/@permalink"):
-            if count >= limit:
-                break
-            url = post
-            if url.startswith("/r/"):
-                url = "https://www.reddit.com" + post
-            await asyncio.sleep(1)
-            try:
-                if "https" not in url:
-                    url = f"https://reddit.com{url}"
-                async for item in scrap_post(session, url, count, limit):
-                    if count < limit:
-                        yield item
-                        count += 1
-            except Exception as e:
-                logging.exception(f"[Reddit] Error scraping post {url}: {e}")
+    try:
+        async with session.get(f'{MANAGER_IP}/proxy?url={subreddit_url}', headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
+            html_content = await response.text()
+            html_tree = fromstring(html_content)
+            for post in html_tree.xpath("//shreddit-post/@permalink"):
+                if count >= limit:
+                    break
+                url = post
+                if url.startswith("/r/"):
+                    url = "https://www.reddit.com" + post
+                await asyncio.sleep(1)
+                try:
+                    if "https" not in url:
+                        url = f"https://reddit.com{url}"
+                    async for item in scrap_post(session, url, count, limit):
+                        if count < limit:
+                            yield item
+                            count += 1
+                except GeneratorExit:
+                    logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit() - post: {url}")
+                    return
+                except Exception as e:
+                    logging.exception(f"[Reddit] Error scraping post {url}: {e}")
+    except GeneratorExit:
+        logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit()")
+        return
+    except aiohttp.ClientError as e:
+        logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
+
 
 async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
@@ -280,9 +294,15 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
                     if count < limit:
                         yield item
                         count += 1
+            except GeneratorExit:
+                logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_json() - permalink: {permalink}")
+                return
             except Exception as e:
                 logging.exception(f"[Reddit] [JSON MODE] Error detected: {e}")
 
+    except GeneratorExit:
+        logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_json()")
+        return
     except aiohttp.ClientError as e:
         logging.error(f"[Reddit] Failed to fetch {url_to_fetch}: {e}")
 
@@ -290,25 +310,35 @@ async def scrap_subreddit_json(session: ClientSession, subreddit_url: str, count
 async def scrap_subreddit_new_layout(session: ClientSession, subreddit_url: str, count: int, limit: int) -> AsyncGenerator[Item, None]:
     if count >= limit:
         return
-    async with session.get(f'{MANAGER_IP}/proxy?url={subreddit_url}', headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
-        html_content = await response.text()
-        html_tree = fromstring(html_content)
-        for post in html_tree.xpath("//shreddit-post/@permalink"):
-            if count >= limit:
-                break
-            url = post
-            if url.startswith("/r/"):
-                url = "https://www.reddit.com" + post
-            await asyncio.sleep(1)
-            try:
-                if "https" not in url:
-                    url = f"https://reddit.com{url}"
-                async for item in scrap_post(session, url, count, limit):
-                    if count < limit:
-                        yield item
-                        count += 1
-            except Exception as e:
-                logging.exception(f"[Reddit] Error scraping post {url}: {e}")
+    try:
+        async with session.get(f'{MANAGER_IP}/proxy?url={subreddit_url}', headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=BASE_TIMEOUT) as response:
+            html_content = await response.text()
+            html_tree = fromstring(html_content)
+            for post in html_tree.xpath("//shreddit-post/@permalink"):
+                if count >= limit:
+                    break
+                url = post
+                if url.startswith("/r/"):
+                    url = "https://www.reddit.com" + post
+                await asyncio.sleep(1)
+                try:
+                    if "https" not in url:
+                        url = f"https://reddit.com{url}"
+                    async for item in scrap_post(session, url, count, limit):
+                        if count < limit:
+                            yield item
+                            count += 1
+                except GeneratorExit:
+                    logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_new_layout() - post: {url}")
+                    return
+                except Exception as e:
+                    logging.exception(f"[Reddit] Error scraping post {url}: {e}")
+    except GeneratorExit:
+        logging.info(f"[Reddit] GeneratorExit caught in scrap_subreddit_new_layout()")
+        return
+    except aiohttp.ClientError as e:
+        logging.error(f"[Reddit] Failed to fetch {subreddit_url}: {e}")
+
 
 def find_permalinks(data):
     if isinstance(data, dict):
