@@ -168,7 +168,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
             author=Author(hashlib.sha1(bytes(content["author"], encoding="utf-8")).hexdigest()),
             created_at=CreatedAt(str(format_timestamp(created_utc))),
             domain=Domain("reddit.com"),
-            url=Url(url + content["permalink"]),
+            url=Url("https://reddit.com" + content["permalink"]),
         )
         if len(tokenizer.encode(item_.content).tokens) > 512:
             logging.info(f"[Reddit] Skipping comment with more than 512 tokens")
@@ -189,7 +189,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         post_data, comments_data = response_json
 
         # Process the post
-        post_item = process_post(post_data["data"]["children"][0])
+        post_item = process_post(post_data)
         if post_item:
             yield post_item
 
@@ -203,6 +203,7 @@ async def scrap_post(session: ClientSession, url: str, count: int, limit: int) -
         logging.error(f"[Reddit] Failed to fetch {_url}: {e}")
     except Exception as e:
         logging.error(f"[Reddit] An error occurred: {e}")
+
 
 
 
