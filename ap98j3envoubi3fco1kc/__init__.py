@@ -58,8 +58,9 @@ def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 def is_within_timeframe_seconds(created_utc, max_oldness_seconds):
+    buffer_seconds = max_oldness_seconds * 0.85  # Apply 15% buffer
     current_time = datetime.now(timezone.utc).timestamp()
-    return (current_time - created_utc) <= max_oldness_seconds
+    return (current_time - created_utc) <= buffer_seconds
 
 def get_age_string(created_utc):
     current_time = datetime.now(timezone.utc).timestamp()
@@ -174,8 +175,13 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 age_string = get_age_string(created_at_timestamp)
                 logging.info(f"Found comment {index} and it's {age_string}: {item}")
                 yield item
-        except (GeneratorExit, asyncio.CancelledError):
-            logging.info("[Reddit] GeneratorExit/CancelledError caught, stopping the generator.")
+        except GeneratorExit:
+            logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
+            task_group.cancel()  # Cancel all ongoing tasks
+            await asyncio.gather(task_group, return_exceptions=True)  # Ensure all tasks are properly cancelled
+            raise  # Re-raise the exception to properly close the generator
+        except asyncio.CancelledError:
+            logging.info("[Reddit] CancelledError caught, stopping the generator.")
             task_group.cancel()  # Cancel all ongoing tasks
             await asyncio.gather(task_group, return_exceptions=True)  # Ensure all tasks are properly cancelled
             raise  # Re-raise the exception to properly close the generator
