@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import logging
 import random
+import re
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict
 from exorde_data import (
@@ -20,6 +21,15 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 REDDIT_URL_TEMPLATE = "https://www.reddit.com{subreddit_url}.json?limit=100"
+
+def correct_reddit_url(url):
+    parts = url.split("https://reddit.comhttps://", 1)
+    if len(parts) == 2:
+        corrected_url = "https://" + parts[1]
+        return corrected_url
+    # Remove extra "r/" from URLs if present
+    corrected_url = re.sub(r'(/r/){2,}', '/r/', url)
+    return corrected_url
 
 async def fetch_with_proxy(session, url, retries=5, backoff_factor=0.3):
     headers = {'User-Agent': USER_AGENT}
@@ -41,10 +51,18 @@ def is_within_timeframe_seconds(created_utc, max_oldness_seconds):
     current_time = datetime.now(timezone.utc).timestamp()
     return (current_time - created_utc) <= max_oldness_seconds
 
+def is_valid_item(item, min_post_length):
+    return (
+        len(item.content) >= min_post_length and
+        "reddit.com" in item.url and
+        item.content != "[deleted]"
+    )
+
 async def fetch_posts(session, subreddit_url, after=None):
     url = REDDIT_URL_TEMPLATE.format(subreddit_url=subreddit_url)
     if after:
         url += f"&after={after}"
+    url = correct_reddit_url(url)  # Correct the URL before making the request
     return await fetch_with_proxy(session, url)
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
@@ -59,6 +77,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         # Ensure the URL is correctly formatted
         if not subreddit_url.startswith('/r/'):
             subreddit_url = f'/r/{subreddit_url}'
+        subreddit_url = subreddit_url.rstrip('/') + '/'
 
         logging.info(f"Fetched URL from proxy: {subreddit_url}")
 
