@@ -56,8 +56,9 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_url')
         subreddit_url = url_response['url']
 
-        # Ensure the URL ends with /
-        subreddit_url = subreddit_url.rstrip('/') + '/'
+        # Ensure the URL is correctly formatted
+        if not subreddit_url.startswith('/r/'):
+            subreddit_url = f'/r/{subreddit_url}'
 
         logging.info(f"Fetched URL from proxy: {subreddit_url}")
 
