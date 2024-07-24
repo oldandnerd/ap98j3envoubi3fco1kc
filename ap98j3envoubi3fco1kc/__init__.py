@@ -3,7 +3,7 @@ import asyncio
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Dict, Union
+from typing import AsyncGenerator, Dict
 from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
 
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +36,16 @@ class CommentCollector:
     def should_stop_fetching(self):
         return self.stop_fetching
 
+async def fetch_with_proxy(session, url):
+    headers = {'User-Agent': USER_AGENT}
+    try:
+        async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
+            response.raise_for_status()
+            return await response.json()
+    except Exception as e:
+        logging.error(f"Error fetching URL {url}: {e}")
+        return None
+
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
@@ -58,49 +68,55 @@ def get_age_string(created_utc, current_time):
     else:
         return f"{int(age_seconds)} seconds old"
 
-async def fetch_comments_from_json(comments_json, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
+async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
     try:
-        comments = comments_json['data']['children']
-        for comment in comments:
-            if comment['kind'] == 't1':
-                comment_data = comment['data']
-                comment_created_at = comment_data['created_utc']
+        comments_url = f"https://www.reddit.com{post_permalink}.json"
+        comments_json = await fetch_with_proxy(session, comments_url)
+        if comments_json and len(comments_json) > 1:
+            comments = comments_json[1]['data']['children']
+            for comment in comments:
+                if comment['kind'] == 't1':
+                    comment_data = comment['data']
+                    comment_created_at = comment_data['created_utc']
 
-                if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
-                    continue  # Skip old comments
+                    if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
+                        continue  # Skip old comments
 
-                comment_content = comment_data.get('body', '[deleted]')
-                comment_author = comment_data.get('author', '[unknown]')
-                comment_url = f"https://reddit.com{comment_data['permalink']}"
+                    comment_content = comment_data.get('body', '[deleted]')
+                    comment_author = comment_data.get('author', '[unknown]')
+                    comment_url = f"https://reddit.com{comment_data['permalink']}"
 
-                if len(comment_content) >= min_post_length:
-                    item = Item(
-                        content=Content(comment_content),
-                        author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                        created_at=CreatedAt(format_timestamp(comment_created_at)),
-                        title=Title(post_permalink),
-                        domain=Domain("reddit.com"),
-                        url=Url(comment_url),
-                    )
+                    if len(comment_content) >= min_post_length:
+                        item = Item(
+                            content=Content(comment_content),
+                            author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                            created_at=CreatedAt(format_timestamp(comment_created_at)),
+                            title=Title(post_permalink),
+                            domain=Domain("reddit.com"),
+                            url=Url(comment_url),
+                        )
 
-                    try:
-                        if not await collector.add_item(item):
-                            return
-                    except Exception as e:
-                        logging.error(f"Error adding item: {e}")
+                        try:
+                            if not await collector.add_item(item):
+                                return
+                        except Exception as e:
+                            logging.error(f"Error adding item: {e}")
     except Exception as e:
-        logging.error(f"Error processing comments JSON: {e}")
+        logging.error(f"Error fetching comments from {post_permalink}: {e}")
 
-async def process_json_data(json_data, collector, max_oldness_seconds, min_post_length, current_time):
-    if isinstance(json_data, list):
-        for json_object in json_data:
-            await process_single_json_object(json_object, collector, max_oldness_seconds, min_post_length, current_time)
-    else:
-        await process_single_json_object(json_data, collector, max_oldness_seconds, min_post_length, current_time)
-
-async def process_single_json_object(json_object, collector, max_oldness_seconds, min_post_length, current_time):
+async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
     try:
-        posts = json_object['data']['children']
+        response_json = await fetch_with_proxy(session, subreddit_url)
+
+        if not response_json:
+            logging.error("Response JSON is empty or invalid")
+            return
+
+        if 'data' not in response_json or 'children' not in response_json['data']:
+            logging.error("Unexpected JSON structure")
+            return
+
+        posts = response_json['data']['children']
 
         for post in posts:
             if collector.should_stop_fetching():
@@ -117,35 +133,63 @@ async def process_single_json_object(json_object, collector, max_oldness_seconds
                     logging.info(f"Skipping old post: {post_permalink}")
                     continue  # Log old post but continue to fetch comments
 
-                # Assuming comments JSON is available within the post data
-                if 'comments' in post_info:
-                    await fetch_comments_from_json(post_info['comments'], post_permalink, collector, max_oldness_seconds, min_post_length, current_time)
+                await fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time)
                 if collector.should_stop_fetching():
                     return
     except Exception as e:
-        logging.error(f"Error processing JSON data: {e}")
+        logging.error(f"Error fetching posts from {subreddit_url}: {e}")
 
-async def query(json_data: Union[Dict, list], parameters: Dict) -> AsyncGenerator[Item, None]:
+async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
     min_post_length = parameters.get('min_post_length')
+    batch_size = parameters.get('batch_size', 20)
 
     collector = CommentCollector(maximum_items_to_collect)
     current_time = datetime.now(timezone.utc).timestamp()
 
-    try:
-        await process_json_data(json_data, collector, max_oldness_seconds, min_post_length, current_time)
+    async with aiohttp.ClientSession() as session:
+        url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}')
+        if not url_response or 'urls' not in url_response:
+            logging.error("Failed to get subreddit URLs from proxy")
+            return
 
-        for index, item in enumerate(collector.items, start=1):
-            created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
-            age_string = get_age_string(created_at_timestamp, current_time)
-            logging.info(f"Found comment {index} and it's {age_string}: {item}")
-            yield item
-    except GeneratorExit:
-        logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
-        raise  # Re-raise the exception to properly close the generator
-    except asyncio.CancelledError:
-        logging.info("[Reddit] CancelledError caught, stopping the generator.")
-        raise  # Re-raise the exception to properly close the generator
-    except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        subreddit_urls = url_response['urls']
+
+        tasks = []
+        for subreddit_url in subreddit_urls:
+            if not subreddit_url.endswith('.json'):
+                subreddit_url = subreddit_url.rstrip('/') + '/.json'
+            tasks.append(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time))
+
+        task_group = asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            await task_group
+
+            for index, item in enumerate(collector.items, start=1):
+                created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
+                age_string = get_age_string(created_at_timestamp, current_time)
+                logging.info(f"Found comment {index} and it's {age_string}: {item}")
+                yield item
+        except GeneratorExit:
+            logging.info("[Reddit] GeneratorExit caught, stopping the generator.")
+            task_group.cancel()  # Cancel all ongoing tasks
+            await asyncio.gather(task_group, return_exceptions=True)  # Ensure all tasks are properly cancelled
+            raise  # Re-raise the exception to properly close the generator
+        except asyncio.CancelledError:
+            logging.info("[Reddit] CancelledError caught, stopping the generator.")
+            task_group.cancel()  # Cancel all ongoing tasks
+            await asyncio.gather(task_group, return_exceptions=True)  # Ensure all tasks are properly cancelled
+            raise  # Re-raise the exception to properly close the generator
+        except Exception as e:
+            logging.error(f"An error occurred: {e}")
+
+# Example usage:
+# parameters = {
+#     'max_oldness_seconds': 86400,
+#     'maximum_items_to_collect': 10,
+#     'min_post_length': 10,
+#     'batch_size': 20
+# }
+# asyncio.run(query(parameters))
