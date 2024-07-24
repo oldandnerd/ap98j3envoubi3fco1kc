@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict
 from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
+from aiohttp import ClientConnectorError
 
 logging.basicConfig(level=logging.INFO)
 
@@ -43,6 +44,11 @@ async def fetch_with_proxy(session, url):
         async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
             response.raise_for_status()
             return await response.json()
+    except ClientConnectorError as e:
+        logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
+        logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
+        await asyncio.sleep(10)
+        return None
     except aiohttp.ClientResponseError as e:
         error_message = await response.json()
         if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
@@ -55,7 +61,6 @@ async def fetch_with_proxy(session, url):
     except Exception as e:
         logging.error(f"Error fetching URL {url}: {e}")
         return None
-
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
