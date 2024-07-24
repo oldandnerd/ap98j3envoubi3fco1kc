@@ -124,9 +124,12 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
     comments_url = f"https://www.reddit.com{post_permalink}.json"
     comments_json = await fetch_with_proxy(session, comments_url)
     if not comments_json or len(comments_json) <= 1:
+        logging.error(f"Failed to fetch or parse comments for post: {comments_url}")
         return
 
     comments = comments_json[1]['data']['children']
+    logging.info(f"Fetched {len(comments)} comments for post: {post_permalink}")
+
     for comment in comments:
         if collector.should_stop_fetching():
             return
@@ -167,12 +170,16 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         if await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
             yield item
 
+
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
     response_json = await fetch_with_proxy(session, subreddit_url)
     if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
+        logging.error(f"Failed to fetch or parse subreddit data for URL: {subreddit_url}")
         return
 
     posts = response_json['data']['children']
+    logging.info(f"Fetched {len(posts)} items from subreddit URL: {subreddit_url}")
+    
     tasks = []
     for post in posts:
         if collector.should_stop_fetching():
@@ -186,6 +193,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
             continue
 
         post_permalink = post_info.get('permalink')
+        logging.info(f"Processing post: {post_info.get('id')} with permalink: {post_permalink}")
 
         tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
 
@@ -194,6 +202,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
+
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
