@@ -3,6 +3,8 @@ import asyncio
 import hashlib
 import logging
 import re
+
+import traceback
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict
 from wordsegment import load, segment
@@ -140,6 +142,7 @@ def post_process_item(item):
         logging.warning(f"[Reddit] failed to correct the URL of item {item.url}")
     return item
 
+
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
     try:
         async for response_json in fetch_with_proxy(session, subreddit_url, collector):
@@ -228,12 +231,15 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                             yield comment_item
                 except Exception as e:
                     logging.error(f"Error processing comments: {e}, Comment data: {comment_data}")
+                    logging.error(traceback.format_exc())
 
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         raise
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}, Post data: {post_info}")
+        logging.error(traceback.format_exc())
+
 
 
 
