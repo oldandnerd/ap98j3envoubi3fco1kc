@@ -4,15 +4,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict
-from exorde_data import (
-    Item,
-    Content,
-    Author,
-    CreatedAt,
-    Title,
-    Url,
-    Domain,
-)
+from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
 
 logging.basicConfig(level=logging.INFO)
 
@@ -57,13 +49,11 @@ async def fetch_with_proxy(session, url):
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-def is_within_timeframe_seconds(created_utc, max_oldness_seconds):
+def is_within_timeframe_seconds(created_utc, max_oldness_seconds, current_time):
     buffer_seconds = max_oldness_seconds * 0.80  # Apply 20% buffer
-    current_time = datetime.now(timezone.utc).timestamp()
     return (current_time - created_utc) <= buffer_seconds
 
-def get_age_string(created_utc):
-    current_time = datetime.now(timezone.utc).timestamp()
+def get_age_string(created_utc, current_time):
     age_seconds = current_time - created_utc
     age_minutes = age_seconds // 60
     age_hours = age_minutes // 60
@@ -78,7 +68,7 @@ def get_age_string(created_utc):
     else:
         return f"{int(age_seconds)} seconds old"
 
-async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length):
+async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
     try:
         comments_url = f"https://www.reddit.com{post_permalink}.json"
         comments_json = await fetch_with_proxy(session, comments_url)
@@ -93,7 +83,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                     comment_url = f"https://reddit.com{comment_data['permalink']}"
 
                     if (len(comment_content) >= min_post_length and
-                        is_within_timeframe_seconds(comment_created_at, max_oldness_seconds)):
+                        is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time)):
 
                         item = Item(
                             content=Content(comment_content),
@@ -112,7 +102,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
     except Exception as e:
         logging.error(f"Error fetching comments from {post_permalink}: {e}")
 
-async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length):
+async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
     try:
         response_json = await fetch_with_proxy(session, subreddit_url)
 
@@ -137,7 +127,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
             if post_kind == 't3':
                 post_permalink = post_info.get('permalink')
                 if post_permalink:
-                    await fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length)
+                    await fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time)
                     if collector.should_stop_fetching():
                         return
     except Exception as e:
@@ -150,6 +140,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     batch_size = parameters.get('batch_size', 20)
 
     collector = CommentCollector(maximum_items_to_collect)
+    current_time = datetime.now(timezone.utc).timestamp()
 
     async with aiohttp.ClientSession() as session:
         url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}')
@@ -163,16 +154,16 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         for subreddit_url in subreddit_urls:
             if not subreddit_url.endswith('.json'):
                 subreddit_url = subreddit_url.rstrip('/') + '/.json'
-            tasks.append(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length))
+            tasks.append(fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time))
 
-        task_group = asyncio.gather(*tasks, return_exceptions=False)
+        task_group = asyncio.gather(*tasks, return_exceptions=True)
 
         try:
             await task_group
 
             for index, item in enumerate(collector.items, start=1):
                 created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
-                age_string = get_age_string(created_at_timestamp)
+                age_string = get_age_string(created_at_timestamp, current_time)
                 logging.info(f"Found comment {index} and it's {age_string}: {item}")
                 yield item
         except GeneratorExit:
