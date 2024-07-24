@@ -69,7 +69,10 @@ async def fetch_with_proxy(session, url, collector) -> AsyncGenerator[Dict, None
                     await asyncio.sleep(2)
                     retries += 1
                 else:
-                    error_message = await response.json()
+                    try:
+                        error_message = await response.json()
+                    except Exception as json_err:
+                        error_message = str(json_err)
                     if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
                         logging.error(f"Error fetching URL {url}: Subreddit is banned.")
                     elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
@@ -84,6 +87,7 @@ async def fetch_with_proxy(session, url, collector) -> AsyncGenerator[Dict, None
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_with_proxy, exiting gracefully.")
         raise
+
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -179,53 +183,57 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         yield item
 
                 # Process comments included in the same JSON response
-                comments = response_json[1]['data']['children']
-                for comment in comments:
-                    if collector.should_stop_fetching():
-                        logging.info("Stopping fetch_comments due to max items collected")
-                        return
+                try:
+                    comments = response_json[1]['data']['children']
+                    for comment in comments:
+                        if collector.should_stop_fetching():
+                            logging.info("Stopping fetch_comments due to max items collected")
+                            return
 
-                    if comment['kind'] != 't1':
-                        logging.info(f"Skipping non-comment item: {comment['kind']}")
-                        continue
+                        if comment['kind'] != 't1':
+                            logging.info(f"Skipping non-comment item: {comment['kind']}")
+                            continue
 
-                    comment_data = comment['data']
-                    comment_created_at = comment_data['created_utc']
+                        comment_data = comment['data']
+                        comment_created_at = comment_data['created_utc']
 
-                    # Skip comments by AutoModerator
-                    if comment_data.get('author') == 'AutoModerator':
-                        logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
-                        continue
+                        # Skip comments by AutoModerator
+                        if comment_data.get('author') == 'AutoModerator':
+                            logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
+                            continue
 
-                    if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
-                        continue
+                        if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
+                            continue
 
-                    comment_content = comment_data.get('body', '[deleted]')
-                    comment_author = comment_data.get('author', '[unknown]')
-                    comment_url = f"https://reddit.com{comment_data['permalink']}"
-                    comment_id = comment_data['name']  # Extracting the comment ID
+                        comment_content = comment_data.get('body', '[deleted]')
+                        comment_author = comment_data.get('author', '[unknown]')
+                        comment_url = f"https://reddit.com{comment_data['permalink']}"
+                        comment_id = comment_data['name']  # Extracting the comment ID
 
-                    if len(comment_content) < min_post_length:
-                        logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
-                        continue
+                        if len(comment_content) < min_post_length:
+                            logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
+                            continue
 
-                    comment_item = Item(
-                        content=Content(comment_content),
-                        author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                        created_at=CreatedAt(format_timestamp(comment_created_at)),
-                        domain=Domain("reddit.com"),
-                        url=Url(comment_url),
-                    )
+                        comment_item = Item(
+                            content=Content(comment_content),
+                            author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                            created_at=CreatedAt(format_timestamp(comment_created_at)),
+                            domain=Domain("reddit.com"),
+                            url=Url(comment_url),
+                        )
 
-                    if await collector.add_item(comment_item, comment_id):  # Using comment_id to avoid duplicates
-                        logging.info(f"New valid comment found: {comment_item}")
-                        yield comment_item
+                        if await collector.add_item(comment_item, comment_id):  # Using comment_id to avoid duplicates
+                            logging.info(f"New valid comment found: {comment_item}")
+                            yield comment_item
+                except Exception as e:
+                    logging.error(f"Error processing comments: {e}")
 
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         raise
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
+
 
 def is_valid_item(item, min_post_length):
     if len(item.content) < min_post_length \
