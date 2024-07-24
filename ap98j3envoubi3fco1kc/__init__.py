@@ -13,8 +13,8 @@ logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-MAX_CONCURRENT_TASKS = 20
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 20  # default value if not provided
+MAX_CONCURRENT_TASKS = 10
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
 
 load()  # Load the wordsegment library data
 
@@ -132,6 +132,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
             return
 
         if comment['kind'] != 't1':
+            logging.info(f"Skipping non-comment item: {comment['kind']}")
             continue
 
         comment_data = comment['data']
@@ -139,9 +140,11 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
 
         # Skip comments by AutoModerator
         if comment_data.get('author') == 'AutoModerator':
+            logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
             continue
 
         if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
+            logging.info(f"Skipping old comment: {comment_data['id']} created at {comment_created_at}")
             continue
 
         comment_content = comment_data.get('body', '[deleted]')
@@ -149,17 +152,20 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         comment_url = f"https://reddit.com{comment_data['permalink']}"
         comment_id = comment_data['name']  # Extracting the comment ID
 
-        if len(comment_content) >= min_post_length:
-            item = Item(
-                content=Content(comment_content),
-                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                created_at=CreatedAt(format_timestamp(comment_created_at)),
-                domain=Domain("reddit.com"),
-                url=Url(comment_url),
-            )
+        if len(comment_content) < min_post_length:
+            logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
+            continue
 
-            if not await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
-                return
+        item = Item(
+            content=Content(comment_content),
+            author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+            created_at=CreatedAt(format_timestamp(comment_created_at)),
+            domain=Domain("reddit.com"),
+            url=Url(comment_url),
+        )
+
+        if not await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
+            return
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
     response_json = await fetch_with_proxy(session, subreddit_url)
@@ -176,12 +182,14 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         post_info = post.get('data', {})
 
         if post_kind != 't3':
+            logging.info(f"Skipping non-post item: {post_kind}")
             continue
 
         post_permalink = post_info.get('permalink')
         post_created_at = post_info.get('created_utc', 0)
 
         if not is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
+            logging.info(f"Skipping old post: {post_info['id']} created at {post_created_at}")
             continue
 
         tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
