@@ -122,6 +122,7 @@ def post_process_item(item):
 
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
     comments_url = f"https://www.reddit.com{post_permalink}.json"
+    logging.info(f"Fetching comments from URL: {comments_url}")
     comments_json = await fetch_with_proxy(session, comments_url)
     if not comments_json or len(comments_json) <= 1:
         logging.error(f"Failed to fetch or parse comments for post: {comments_url}")
@@ -172,6 +173,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
             yield item
         else:
             logging.info(f"Comment: {comment_id} already processed or max items reached")
+
 
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
