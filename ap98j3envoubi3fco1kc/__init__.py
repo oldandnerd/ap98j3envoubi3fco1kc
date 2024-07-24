@@ -15,6 +15,7 @@ MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
 DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
+MAX_RETRIES_PROXY = 5  # Maximum number of retries for 503 errors
 
 load()  # Load the wordsegment library data
 
@@ -47,27 +48,35 @@ class CommentCollector:
 
 async def fetch_with_proxy(session, url):
     headers = {'User-Agent': USER_AGENT}
-    try:
-        async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
-            response.raise_for_status()
-            return await response.json()
-    except ClientConnectorError as e:
-        logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
-        logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
-        await asyncio.sleep(10)
-        return None
-    except aiohttp.ClientResponseError as e:
-        error_message = await response.json()
-        if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
-            logging.error(f"Error fetching URL {url}: Subreddit is banned.")
-        elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
-            logging.error(f"Error fetching URL {url}: Subreddit is private.")
-        else:
-            logging.error(f"Error fetching URL {url}: {e.message}")
-        return None
-    except Exception as e:
-        logging.error(f"Error fetching URL {url}: {e}")
-        return None
+    retries = 0
+    while retries < MAX_RETRIES_PROXY:
+        try:
+            async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
+                response.raise_for_status()
+                return await response.json()
+        except ClientConnectorError as e:
+            logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
+            logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
+            await asyncio.sleep(10)
+        except aiohttp.ClientResponseError as e:
+            if e.status == 503:
+                logging.info("No available IPs. Retrying in 2 seconds...")
+                await asyncio.sleep(2)
+                retries += 1
+            else:
+                error_message = await response.json()
+                if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
+                    logging.error(f"Error fetching URL {url}: Subreddit is banned.")
+                elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
+                    logging.error(f"Error fetching URL {url}: Subreddit is private.")
+                else:
+                    logging.error(f"Error fetching URL {url}: {e.message}")
+                return None
+        except Exception as e:
+            logging.error(f"Error fetching URL {url}: {e}")
+            return None
+    logging.error(f"Maximum retries reached for URL {url}. Skipping.")
+    return None
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -144,7 +153,6 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
             continue
 
         if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
-            #logging.info(f"Skipping old comment: {comment_data['id']} created at {comment_created_at}")
             continue
 
         comment_content = comment_data.get('body', '[deleted]')
