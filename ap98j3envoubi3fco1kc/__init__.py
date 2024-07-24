@@ -210,6 +210,7 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             if collector.should_stop_fetching():
                 break
 
+
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
@@ -235,12 +236,10 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
         tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) for subreddit_url in subreddit_urls]
 
-        # Run tasks concurrently and yield results as they come
-        for task in asyncio.as_completed(tasks):
-            async for comment in await task:
+        for task in tasks:
+            async for comment in task:
                 yield comment
 
-        # After tasks complete, yield collected items
         for index, item in enumerate(collector.items, start=1):
             created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
             age_string = get_age_string(created_at_timestamp, current_time)
