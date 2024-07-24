@@ -14,7 +14,6 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 200
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 7  # default value if not provided
 MAX_RETRIES_PROXY = 3  # Maximum number of retries for 503 errors
 
 load()  # Load the wordsegment library data
@@ -90,21 +89,6 @@ def format_timestamp(timestamp):
 
 def is_within_timeframe_seconds(created_utc, max_oldness_seconds, current_time):
     return (current_time - created_utc) <= max_oldness_seconds
-
-def get_age_string(created_utc, current_time):
-    age_seconds = current_time - created_utc
-    age_minutes = age_seconds // 60
-    age_hours = age_minutes // 60
-    age_days = age_hours // 24
-
-    if age_days > 0:
-        return f"{int(age_days)} days old"
-    elif age_hours > 0:
-        return f"{int(age_hours)} hours old"
-    elif age_minutes > 0:
-        return f"{int(age_minutes)} minutes old"
-    else:
-        return f"{int(age_seconds)} seconds old"
 
 def correct_reddit_url(url):
     parts = url.split("https://reddit.comhttps://", 1)
@@ -256,46 +240,52 @@ def is_valid_item(item, min_post_length):
     else:
         return True
 
-async def limited_fetch(semaphore, session, subreddit_urls, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
+async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
+    failed_subreddits = []
     async with semaphore:
-        # First attempt to fetch all URLs
-        initial_tasks = [fetch_posts(session, url.rstrip('/') + '/.json' if not url.endswith('.json') else url, collector, max_oldness_seconds, min_post_length, current_time) for url in subreddit_urls]
-        failed_subreddits = []
-        
-        results = await asyncio.gather(*initial_tasks, return_exceptions=True)
-        for result, url in zip(results, subreddit_urls):
-            if isinstance(result, Exception):
-                logging.error(f"Error fetching subreddit URL {url}: {result}")
-                failed_subreddits.append(url)
-            else:
-                for item in result:
-                    yield item
-        
-        # Retry failed subreddits
-        for attempt in range(1, nb_subreddit_attempts):
+        for attempt in range(1):
+            try:
+                async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
+                    try:
+                        yield item
+                    except GeneratorExit:
+                        logging.info("GeneratorExit received in fetch_posts within limited_fetch, exiting gracefully.")
+                        raise
+            except GeneratorExit:
+                logging.info("GeneratorExit received inside attempt loop in limited_fetch, exiting gracefully.")
+                raise
+            except Exception as e:
+                logging.error(f"Error inside attempt loop in limited_fetch: {e}")
+                failed_subreddits.append(subreddit_url)
+
+        # Retry the failed subreddits
+        for attempt in range(nb_subreddit_attempts - 1):
             if not failed_subreddits:
                 break
-            logging.info(f"Retrying failed subreddits, attempt {attempt + 1}")
+            logging.info(f"Retrying failed subreddits, attempt {attempt + 2}")
             current_failed = []
-            retry_tasks = [fetch_posts(session, url.rstrip('/') + '/.json' if not url.endswith('.json') else url, collector, max_oldness_seconds, min_post_length, current_time) for url in failed_subreddits]
-
-            results = await asyncio.gather(*retry_tasks, return_exceptions=True)
-            for result, url in zip(results, failed_subreddits):
-                if isinstance(result, Exception):
-                    logging.error(f"Error fetching subreddit URL {url} on retry {attempt + 1}: {result}")
-                    current_failed.append(url)
-                else:
-                    for item in result:
-                        yield item
-
+            for subreddit_url in failed_subreddits:
+                try:
+                    async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
+                        try:
+                            yield item
+                        except GeneratorExit:
+                            logging.info("GeneratorExit received in fetch_posts within limited_fetch retries, exiting gracefully.")
+                            raise
+                except GeneratorExit:
+                    logging.info("GeneratorExit received inside retry loop in limited_fetch, exiting gracefully.")
+                    raise
+                except Exception as e:
+                    logging.error(f"Error inside retry loop in limited_fetch: {e}")
+                    current_failed.append(subreddit_url)
             failed_subreddits = current_failed
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
     min_post_length = parameters.get('min_post_length')
-    batch_size = parameters.get('batch_size', 20)
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS)
+    batch_size = parameters.get('batch_size', 100)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 100)
 
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
                  f"maximum_items_to_collect={maximum_items_to_collect}, min_post_length={min_post_length}, "
@@ -314,14 +304,20 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             subreddit_urls = url_response['urls']
 
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-            async for item in limited_fetch(semaphore, session, subreddit_urls, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts):
-                yield item
+            tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) for subreddit_url in subreddit_urls]
+
+            for task in tasks:
+                async for item in task:
+                    try:
+                        yield item
+                    except GeneratorExit:
+                        logging.info("GeneratorExit received in limited_fetch within query, exiting gracefully.")
+                        raise
 
             for index, item in enumerate(collector.items, start=1):
                 created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
-                age_string = get_age_string(created_at_timestamp, current_time)
                 item = post_process_item(item)
-                logging.info(f"Found comment {index} and it's {age_string}: {item}")
+                logging.info(f"Found comment {index}: {item}")
                 yield item
     except GeneratorExit:
         logging.info("GeneratorExit received in query, exiting gracefully.")
