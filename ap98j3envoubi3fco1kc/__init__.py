@@ -44,18 +44,18 @@ async def fetch_with_proxy(session, url):
             response.raise_for_status()
             return await response.json()
     except aiohttp.ClientResponseError as e:
-        if e.status == 404:
-            error_message = await response.json()
-            if 'reason' in error_message:
-                logging.error(f"Error fetching URL {url}: {error_message['reason']}")
-            else:
-                logging.error(f"Error fetching URL {url}: {e.message}")
+        error_message = await response.json()
+        if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
+            logging.error(f"Error fetching URL {url}: Subreddit is banned.")
+        elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
+            logging.error(f"Error fetching URL {url}: Subreddit is private.")
         else:
-            logging.error(f"Error fetching URL {url}: {e}")
+            logging.error(f"Error fetching URL {url}: {e.message}")
         return None
     except Exception as e:
         logging.error(f"Error fetching URL {url}: {e}")
         return None
+
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
