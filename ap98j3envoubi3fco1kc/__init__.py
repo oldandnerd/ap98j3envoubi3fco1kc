@@ -144,7 +144,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
             continue
 
         if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
-            #logging.info(f"Skipping old comment: {comment_data['id']} created at {comment_created_at}")
+            logging.info(f"Skipping old comment: {comment_data['id']} created at {comment_created_at}")
             continue
 
         comment_content = comment_data.get('body', '[deleted]')
