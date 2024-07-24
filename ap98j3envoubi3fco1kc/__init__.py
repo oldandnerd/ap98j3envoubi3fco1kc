@@ -14,8 +14,8 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
-MAX_RETRIES_PROXY = 5  # Maximum number of retries for 503 errors
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 7  # default value if not provided
+MAX_RETRIES_PROXY = 3  # Maximum number of retries for 503 errors
 
 load()  # Load the wordsegment library data
 
@@ -49,7 +49,6 @@ class CommentCollector:
 async def fetch_with_proxy(session, url, collector) -> AsyncGenerator[Dict, None]:
     headers = {'User-Agent': USER_AGENT}
     retries = 0
-    logging.info("Entering fetch_with_proxy")
     try:
         while retries < MAX_RETRIES_PROXY:
             if collector.should_stop_fetching():
@@ -85,11 +84,6 @@ async def fetch_with_proxy(session, url, collector) -> AsyncGenerator[Dict, None
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_with_proxy, exiting gracefully.")
         raise
-    finally:
-        logging.info("Exiting fetch_with_proxy")
-
-
-
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -127,7 +121,7 @@ def extract_subreddit_name(input_string):
 
 def post_process_item(item):
     try:
-        if len(item.content) > 10:
+        if item.content:
             subreddit_name = extract_subreddit_name(item.url)
             if subreddit_name is None:
                 return item
@@ -143,7 +137,6 @@ def post_process_item(item):
     return item
 
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
-    logging.info("Entering fetch_comments")
     try:
         comments_url = f"https://www.reddit.com{post_permalink}.json"
         async for comments_json in fetch_with_proxy(session, comments_url, collector):
@@ -197,15 +190,8 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         raise
     except Exception as e:
         logging.error(f"Error in fetch_comments: {e}")
-    finally:
-        logging.info("Exiting fetch_comments")
-
-
-
-
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
-    logging.info("Entering fetch_posts")
     try:
         async for response_json in fetch_with_proxy(session, subreddit_url, collector):
             if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
@@ -236,6 +222,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
                     item = Item(
                         title=Title(post_content),
+                        content=Content(post_content),  # Adding content to match expected structure
                         author=Author(hashlib.sha1(bytes(post_author, encoding="utf-8")).hexdigest()),
                         created_at=CreatedAt(format_timestamp(post_created_at)),
                         domain=Domain("reddit.com"),
@@ -258,15 +245,8 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         raise
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
-    finally:
-        logging.info("Exiting fetch_posts")
-
-
-
-
 
 async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
-    logging.info("Entering limited_fetch")
     try:
         async with semaphore:
             for attempt in range(nb_subreddit_attempts):
@@ -291,13 +271,8 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
         raise
     except Exception as e:
         logging.error(f"Error in limited_fetch: {e}")
-    finally:
-        logging.info("Exiting limited_fetch")
-
-
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
-    logging.info("Entering query")
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
     min_post_length = parameters.get('min_post_length')
@@ -343,7 +318,6 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     except Exception as e:
         logging.error(f"Error in query: {e}")
     finally:
-        logging.info("Exiting query")
         logging.info("Cleaning up: closing session.")
         await session.close()
         logging.info("Session closed.")
