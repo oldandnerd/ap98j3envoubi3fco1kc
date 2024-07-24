@@ -84,9 +84,10 @@ async def fetch_with_proxy(session, url, collector) -> AsyncGenerator[Dict, None
         logging.error(f"Maximum retries reached for URL {url}. Skipping.")
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_with_proxy, exiting gracefully.")
-        return
+        raise
     finally:
         logging.info("Exiting fetch_with_proxy")
+
 
 
 def format_timestamp(timestamp):
@@ -192,12 +193,12 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                     yield item
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_comments, exiting gracefully.")
-        return
+        raise
     except Exception as e:
         logging.error(f"Error in fetch_comments: {e}")
-        return
     finally:
         logging.info("Exiting fetch_comments")
+
 
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
@@ -247,12 +248,12 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                     yield comment
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
-        return
+        raise
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
-        return
     finally:
         logging.info("Exiting fetch_posts")
+
 
 
 async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
@@ -268,16 +269,15 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
                         break
                 except GeneratorExit:
                     logging.info("GeneratorExit received inside attempt loop in limited_fetch, exiting gracefully.")
-                    return
+                    raise
                 except Exception as e:
                     logging.error(f"Error inside attempt loop in limited_fetch: {e}")
                     return
     except GeneratorExit:
         logging.info("GeneratorExit received in limited_fetch, exiting gracefully.")
-        return
+        raise
     except Exception as e:
         logging.error(f"Error in limited_fetch: {e}")
-        return
     finally:
         logging.info("Exiting limited_fetch")
 
@@ -321,10 +321,9 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                     yield item
         except GeneratorExit:
             logging.info("GeneratorExit received in query, exiting gracefully.")
-            return
+            raise
         except Exception as e:
             logging.error(f"Error in query: {e}")
-            return
         finally:
             logging.info("Exiting query")
             logging.info("Cleaning up: closing session.")
