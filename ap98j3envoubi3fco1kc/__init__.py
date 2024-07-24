@@ -183,6 +183,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         yield item
 
                 # Process comments included in the same JSON response
+                comment_data = {}
                 try:
                     comments = response_json[1]['data']['children']
                     for comment in comments:
