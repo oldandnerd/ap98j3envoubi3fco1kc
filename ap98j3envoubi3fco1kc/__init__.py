@@ -177,11 +177,15 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         await asyncio.gather(*tasks, return_exceptions=True)
 
         try:
-            for index, item in enumerate(collector.items, start=1):
-                created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
-                age_string = get_age_string(created_at_timestamp, current_time)
-                logging.info(f"Found comment {index} and it's {age_string}: {item}")
-                yield item
+            for item in collector.items:
+                formatted_item = {
+                    'content': item.content.content,
+                    'created_at': item.created_at,
+                    'domain': item.domain.domain,
+                    'url': item.url.url
+                }
+                logging.info(f"Found Reddit comment: {formatted_item}")
+                yield formatted_item
         except GeneratorExit:
             logging.info("Async generator received GeneratorExit, performing cleanup.")
             # Perform any necessary cleanup here before the generator is closed.
