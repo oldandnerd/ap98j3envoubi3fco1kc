@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-MAX_CONCURRENT_TASKS = 10
+MAX_CONCURRENT_TASKS = 20
 
 class CommentCollector:
     def __init__(self, max_items):
@@ -155,7 +155,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
     min_post_length = parameters.get('min_post_length')
     batch_size = parameters.get('batch_size', 20)
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 3)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 7)
 
     # Log input parameters
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
