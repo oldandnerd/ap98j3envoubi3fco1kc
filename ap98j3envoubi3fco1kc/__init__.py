@@ -1,9 +1,11 @@
+
 import aiohttp
 import asyncio
 import hashlib
 import logging
 import re
 import json
+import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict
 from wordsegment import load, segment
@@ -66,7 +68,7 @@ class CommentCollector:
             with open(self.state_file, "r") as f:
                 state = json.load(f)
                 self.total_items_collected = state.get("total_items_collected", 0)
-                self.items = [Item(**item) for item in state.get("items", [])]
+                self.items = [self.create_item_from_dict(item) for item in state.get("items", [])]
                 self.processed_ids = set(state.get("processed_ids", []))
                 self.stop_fetching = state.get("stop_fetching", False)
                 logging.info("State loaded from file.")
@@ -74,6 +76,32 @@ class CommentCollector:
             logging.info("No state file found, starting fresh.")
         except Exception as e:
             logging.error(f"Error loading state: {e}")
+
+    def reset_state(self):
+        self.total_items_collected = 0
+        self.items = []
+        self.processed_ids = set()
+        self.stop_fetching = False
+        self.logged_stop_message = False
+        try:
+            os.remove(self.state_file)
+            logging.info("State file deleted.")
+        except FileNotFoundError:
+            logging.info("No state file to delete.")
+        except Exception as e:
+            logging.error(f"Error deleting state file: {e}")
+        logging.info("State reset.")
+
+    @staticmethod
+    def create_item_from_dict(item_dict):
+        return Item(
+            title=Title(item_dict.get("title")),
+            content=Content(item_dict.get("content")),
+            author=Author(item_dict.get("author")),
+            created_at=CreatedAt(item_dict.get("created_at")),
+            domain=Domain(item_dict.get("domain")),
+            url=Url(item_dict.get("url")),
+        )
 
 async def fetch_with_proxy(session, url, collector) -> AsyncGenerator[Dict, None]:
     headers = {'User-Agent': USER_AGENT}
@@ -246,7 +274,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                 if is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
                     post_content = post_info.get('title', '[deleted]')
                     post_author = post_info.get('author', '[unknown]')
-                    post_url = f"https://reddit.com{post_info.get('url', '')}"
+                    post_url = f"https://reddit.com{post_permalink}"
                     post_id = post_info['name']  # Extracting the post ID
 
                     item = Item(
