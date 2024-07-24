@@ -202,6 +202,14 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
             yield comment
 
+async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts):
+    async with semaphore:
+        for attempt in range(nb_subreddit_attempts):
+            async for comment in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
+                yield comment
+            if collector.should_stop_fetching():
+                break
+
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
@@ -216,9 +224,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     collector = CommentCollector(maximum_items_to_collect)
     current_time = datetime.now(timezone.utc).timestamp()
 
-    session = aiohttp.ClientSession()
-
-    try:
+    async with aiohttp.ClientSession() as session:
         url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector)
         if not url_response or 'urls' not in url_response:
             logging.error("Failed to get subreddit URLs from proxy")
@@ -227,24 +233,11 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         subreddit_urls = url_response['urls']
 
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-        tasks = []
-
-        async def limited_fetch(subreddit_url):
-            for attempt in range(nb_subreddit_attempts):
-                async with semaphore:
-                    async for comment in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
-                        yield comment
-                if collector.should_stop_fetching():
-                    break
-
-        for subreddit_url in subreddit_urls:
-            if collector.should_stop_fetching():
-                break
-            tasks.append(limited_fetch(subreddit_url))
+        tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) for subreddit_url in subreddit_urls]
 
         # Run tasks concurrently and yield results as they come
         for task in asyncio.as_completed(tasks):
-            async for comment in task:
+            async for comment in await task:
                 yield comment
 
         # After tasks complete, yield collected items
@@ -254,11 +247,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             item = post_process_item(item)
             logging.info(f"Found comment {index} and it's {age_string}: {item}")
             yield item
-    except GeneratorExit:
-        logging.info("Async generator received GeneratorExit, performing cleanup.")
-        raise
-    finally:
-        logging.info("Cleaning up: closing session.")
-        await session.close()
-        logging.info("Session closed.")
-        logging.info("End of iterator - StopAsyncIteration")
+
+    logging.info("Cleaning up: closing session.")
+    logging.info("Session closed.")
+    logging.info("End of iterator - StopAsyncIteration")
