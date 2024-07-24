@@ -14,8 +14,8 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 7  # default value if not provided
-MAX_RETRIES_PROXY = 2  # Maximum number of retries for 503 errors
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
+MAX_RETRIES_PROXY = 5  # Maximum number of retries for 503 errors
 
 load()  # Load the wordsegment library data
 
@@ -202,14 +202,13 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
             yield comment
 
-async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts):
+async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
     async with semaphore:
         for attempt in range(nb_subreddit_attempts):
             async for comment in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
                 yield comment
             if collector.should_stop_fetching():
                 break
-
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
