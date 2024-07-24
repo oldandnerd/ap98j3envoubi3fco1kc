@@ -15,7 +15,7 @@ MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
 DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
-MAX_RETRIES_PROXY = 2  # Maximum number of retries for 503 errors
+MAX_RETRIES_PROXY = 5  # Maximum number of retries for 503 errors
 
 load()  # Load the wordsegment library data
 
@@ -184,7 +184,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         return
 
     posts = response_json['data']['children']
-    tasks = []
     for post in posts:
         if collector.should_stop_fetching():
             return
@@ -244,8 +243,9 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             tasks.append(limited_fetch(subreddit_url))
 
         # Run tasks concurrently and yield results as they come
-        async for comment in asyncio.as_completed(tasks):
-            yield comment
+        for task in asyncio.as_completed(tasks):
+            async for comment in task:
+                yield comment
 
         # After tasks complete, yield collected items
         for index, item in enumerate(collector.items, start=1):
