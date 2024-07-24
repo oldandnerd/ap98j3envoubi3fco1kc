@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 7  # default value if not provided
 
 load()  # Load the wordsegment library data
 
@@ -186,11 +186,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
             continue
 
         post_permalink = post_info.get('permalink')
-        post_created_at = post_info.get('created_utc', 0)
-
-        if not is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
-            logging.info(f"Skipping old post: {post_info['id']} created at {post_created_at}")
-            continue
 
         tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
 
