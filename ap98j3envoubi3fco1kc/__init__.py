@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 7  # default value if not provided
 
 load()  # Load the wordsegment library data
 
@@ -103,19 +103,19 @@ def extract_subreddit_name(input_string):
 
 def post_process_item(item):
     try:
-        if len(item['content']) > 10:
-            subreddit_name = extract_subreddit_name(item["url"])
+        if len(item.content) > 10:
+            subreddit_name = extract_subreddit_name(item.url)
             if subreddit_name is None:
                 return item
             segmented_subreddit_strs = segment(subreddit_name)
             segmented_subreddit_name = " ".join(segmented_subreddit_strs)
-            item["content"] = item["content"] + ". - " + segmented_subreddit_name + " ," + subreddit_name
+            item.content = Content(item.content + ". - " + segmented_subreddit_name + " ," + subreddit_name)
     except Exception as e:
         logging.exception(f"[Reddit post_process_item] Word segmentation failed: {e}, ignoring...")
     try:
-        item["url"] = correct_reddit_url(item["url"])
+        item.url = Url(correct_reddit_url(item.url))
     except:
-        logging.warning(f"[Reddit] failed to correct the URL of item %s", item["url"])
+        logging.warning(f"[Reddit] failed to correct the URL of item {item.url}")
     return item
 
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
@@ -143,13 +143,13 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         comment_url = f"https://reddit.com{comment_data['permalink']}"
 
         if len(comment_content) >= min_post_length:
-            item = {
-                'content': comment_content,
-                'author': hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest(),
-                'created_at': format_timestamp(comment_created_at),
-                'domain': "reddit.com",
-                'url': comment_url,
-            }
+            item = Item(
+                content=Content(comment_content),
+                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                created_at=CreatedAt(format_timestamp(comment_created_at)),
+                domain=Domain("reddit.com"),
+                url=Url(comment_url),
+            )
 
             if not await collector.add_item(item):
                 return
@@ -221,7 +221,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         try:
             for index, item in enumerate(collector.items, start=1):
-                created_at_timestamp = datetime.strptime(item['created_at'], '%Y-%m-%dT%H:%M:%SZ').timestamp()
+                created_at_timestamp = datetime.strptime(item.created_at.value, '%Y-%m-%dT%H:%M:%SZ').timestamp()
                 age_string = get_age_string(created_at_timestamp, current_time)
                 item = post_process_item(item)
                 logging.info(f"Found comment {index} and it's {age_string}: {item}")
