@@ -3,7 +3,7 @@ import asyncio
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict
 from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
 
 logging.basicConfig(level=logging.INFO)
@@ -111,6 +111,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         return
 
     posts = response_json['data']['children']
+    tasks = []
     for post in posts:
         if collector.should_stop_fetching():
             return
@@ -127,9 +128,13 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         if not is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
             continue
 
-        await fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time)
+        tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
+
         if collector.should_stop_fetching():
-            return
+            break
+
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
@@ -151,9 +156,9 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
         async def limited_fetch(subreddit_url):
             async with semaphore:
-                await fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time)
+                await fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time)
 
-        tasks = [limited_fetch(subreddit_url.rstrip('/') + '/.json') if not subreddit_url.endswith('.json') else limited_fetch(subreddit_url) for subreddit_url in subreddit_urls]
+        tasks = [limited_fetch(subreddit_url) for subreddit_url in subreddit_urls]
         await asyncio.gather(*tasks, return_exceptions=True)
 
         for index, item in enumerate(collector.items, start=1):
