@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import logging
 import re
+import json
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict
 from wordsegment import load, segment
@@ -14,13 +15,13 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 7  # default value if not provided
-MAX_RETRIES_PROXY = 3  # Maximum number of retries for 503 errors
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
+MAX_RETRIES_PROXY = 5  # Maximum number of retries for 503 errors
 
 load()  # Load the wordsegment library data
 
 class CommentCollector:
-    def __init__(self, max_items):
+    def __init__(self, max_items, state_file="collector_state.json"):
         self.total_items_collected = 0
         self.max_items = max_items
         self.items = []
@@ -28,6 +29,8 @@ class CommentCollector:
         self.lock = asyncio.Lock()
         self.stop_fetching = False
         self.logged_stop_message = False
+        self.state_file = state_file
+        self.load_state()
 
     async def add_item(self, item, item_id):
         async with self.lock:
@@ -35,6 +38,7 @@ class CommentCollector:
                 self.items.append(item)
                 self.processed_ids.add(item_id)
                 self.total_items_collected += 1
+                self.save_state()
                 if self.total_items_collected >= self.max_items:
                     self.stop_fetching = True
                     if not self.logged_stop_message:
@@ -45,6 +49,31 @@ class CommentCollector:
 
     def should_stop_fetching(self):
         return self.stop_fetching
+
+    def save_state(self):
+        state = {
+            "total_items_collected": self.total_items_collected,
+            "items": [item.__dict__ for item in self.items],
+            "processed_ids": list(self.processed_ids),
+            "stop_fetching": self.stop_fetching,
+        }
+        with open(self.state_file, "w") as f:
+            json.dump(state, f)
+        logging.info("State saved to file.")
+
+    def load_state(self):
+        try:
+            with open(self.state_file, "r") as f:
+                state = json.load(f)
+                self.total_items_collected = state.get("total_items_collected", 0)
+                self.items = [Item(**item) for item in state.get("items", [])]
+                self.processed_ids = set(state.get("processed_ids", []))
+                self.stop_fetching = state.get("stop_fetching", False)
+                logging.info("State loaded from file.")
+        except FileNotFoundError:
+            logging.info("No state file found, starting fresh.")
+        except Exception as e:
+            logging.error(f"Error loading state: {e}")
 
 async def fetch_with_proxy(session, url, collector) -> AsyncGenerator[Dict, None]:
     headers = {'User-Agent': USER_AGENT}
