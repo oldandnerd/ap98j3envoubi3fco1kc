@@ -168,7 +168,10 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         )
 
         if await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
+            logging.info(f"Yielding comment: {comment_id} from post: {post_permalink}")
             yield item
+        else:
+            logging.info(f"Comment: {comment_id} already processed or max items reached")
 
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
