@@ -155,10 +155,12 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
     min_post_length = parameters.get('min_post_length')
     batch_size = parameters.get('batch_size', 20)
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 3)  # default to 3 attempts if not specified
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 3)
 
     # Log input parameters
-    logging.info(f"[Reddit] Input parameters: {parameters}")
+    logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
+                 f"maximum_items_to_collect={maximum_items_to_collect}, min_post_length={min_post_length}, "
+                 f"batch_size={batch_size}, nb_subreddit_attempts={nb_subreddit_attempts}")
 
     collector = CommentCollector(maximum_items_to_collect)
     current_time = datetime.now(timezone.utc).timestamp()
