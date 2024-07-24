@@ -14,8 +14,8 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 7  # default value if not provided
-MAX_RETRIES_PROXY = 2  # Maximum number of retries for 503 errors
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
+MAX_RETRIES_PROXY = 5  # Maximum number of retries for 503 errors
 
 load()  # Load the wordsegment library data
 
@@ -46,10 +46,13 @@ class CommentCollector:
     def should_stop_fetching(self):
         return self.stop_fetching
 
-async def fetch_with_proxy(session, url):
+async def fetch_with_proxy(session, url, collector):
     headers = {'User-Agent': USER_AGENT}
     retries = 0
     while retries < MAX_RETRIES_PROXY:
+        if collector.should_stop_fetching():
+            logging.info("Stopping fetch_with_proxy retries as maximum items have been collected.")
+            break
         try:
             async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
                 response.raise_for_status()
@@ -61,7 +64,7 @@ async def fetch_with_proxy(session, url):
         except aiohttp.ClientResponseError as e:
             if e.status == 503:
                 logging.info("No available IPs. Retrying in 2 seconds...")
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
                 retries += 1
             else:
                 error_message = await response.json()
@@ -131,7 +134,7 @@ def post_process_item(item):
 
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
     comments_url = f"https://www.reddit.com{post_permalink}.json"
-    comments_json = await fetch_with_proxy(session, comments_url)
+    comments_json = await fetch_with_proxy(session, comments_url, collector)
     if not comments_json or len(comments_json) <= 1:
         return
 
@@ -176,7 +179,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
             return
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
-    response_json = await fetch_with_proxy(session, subreddit_url)
+    response_json = await fetch_with_proxy(session, subreddit_url, collector)
     if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
         return
 
@@ -222,7 +225,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     session = aiohttp.ClientSession()
 
     try:
-        url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}')
+        url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector)
         if not url_response or 'urls' not in url_response:
             logging.error("Failed to get subreddit URLs from proxy")
             return
@@ -261,3 +264,4 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         await session.close()
         logging.info("Session closed.")
         logging.info("End of iterator - StopAsyncIteration")
+
