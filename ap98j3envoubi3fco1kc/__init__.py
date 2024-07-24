@@ -223,6 +223,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     current_time = datetime.now(timezone.utc).timestamp()
 
     session = aiohttp.ClientSession()
+    tasks = []
 
     try:
         url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector)
@@ -233,7 +234,6 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         subreddit_urls = url_response['urls']
 
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-        tasks = []
 
         async def limited_fetch(subreddit_url):
             for attempt in range(nb_subreddit_attempts):
@@ -259,9 +259,13 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         except GeneratorExit:
             logging.info("Async generator received GeneratorExit, performing cleanup.")
             raise
+    except GeneratorExit:
+        logging.info("Async generator received GeneratorExit, performing cleanup.")
     finally:
-        logging.info("Cleaning up: closing session.")
+        logging.info("Cleaning up: cancelling tasks and closing session.")
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await session.close()
         logging.info("Session closed.")
         logging.info("End of iterator - StopAsyncIteration")
-
