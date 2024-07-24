@@ -77,14 +77,16 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
             for comment in comments:
                 if comment['kind'] == 't1':
                     comment_data = comment['data']
+                    comment_created_at = comment_data['created_utc']
+
+                    if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
+                        continue  # Skip old comments
+
                     comment_content = comment_data.get('body', '[deleted]')
                     comment_author = comment_data.get('author', '[unknown]')
-                    comment_created_at = comment_data['created_utc']
                     comment_url = f"https://reddit.com{comment_data['permalink']}"
 
-                    if (len(comment_content) >= min_post_length and
-                        is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time)):
-
+                    if len(comment_content) >= min_post_length:
                         item = Item(
                             content=Content(comment_content),
                             author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
@@ -110,7 +112,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
             logging.error("Response JSON is empty or invalid")
             return
 
-        # Check the structure of the response JSON
         if 'data' not in response_json or 'children' not in response_json['data']:
             logging.error("Unexpected JSON structure")
             return
@@ -126,10 +127,15 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
             if post_kind == 't3':
                 post_permalink = post_info.get('permalink')
-                if post_permalink:
-                    await fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time)
-                    if collector.should_stop_fetching():
-                        return
+                post_created_at = post_info.get('created_utc', 0)
+
+                if not is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
+                    logging.info(f"Skipping old post: {post_permalink}")
+                    continue  # Log old post but continue to fetch comments
+
+                await fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time)
+                if collector.should_stop_fetching():
+                    return
     except Exception as e:
         logging.error(f"Error fetching posts from {subreddit_url}: {e}")
 
