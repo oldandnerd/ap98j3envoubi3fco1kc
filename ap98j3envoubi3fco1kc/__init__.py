@@ -215,13 +215,13 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                 post_created_at = post_info.get('created_utc', 0)
 
                 if is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
-                    post_content = post_info.get('title', '[deleted]')
+                    post_content = post_info.get('selftext', '[deleted]')
                     post_author = post_info.get('author', '[unknown]')
                     post_url = f"https://reddit.com{post_permalink}"
                     post_id = post_info['name']  # Extracting the post ID
 
                     item = Item(
-                        title=Title(post_content),
+                        title=Title(post_info.get('title', '[deleted]')),
                         content=Content(post_content),  # Ensure content is always added
                         author=Author(hashlib.sha1(bytes(post_author, encoding="utf-8")).hexdigest()),
                         created_at=CreatedAt(format_timestamp(post_created_at)),
@@ -229,14 +229,15 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         url=Url(post_url),
                     )
 
-                    if await collector.add_item(item, post_id):  # Using post_id to avoid duplicates
+                    if is_valid_item(item, min_post_length) and await collector.add_item(item, post_id):
                         logging.info(f"New valid post found: {item}")
                         yield item
 
                 # Fetch comments for all posts, regardless of age
                 async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
                     try:
-                        yield comment
+                        if is_valid_item(comment, min_post_length):
+                            yield comment
                     except GeneratorExit:
                         logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
                         raise
@@ -246,6 +247,14 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
 
+def is_valid_item(item, min_post_length):
+    if len(item.content) < min_post_length \
+    or item.url.startswith("https://reddit.comhttps:")  \
+    or not ("reddit.com" in item.url) \
+    or item.content == "[deleted]":
+        return False
+    else:
+        return True
 
 async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
     try:
