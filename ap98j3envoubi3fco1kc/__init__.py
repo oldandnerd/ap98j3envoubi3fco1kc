@@ -50,8 +50,7 @@ def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 def is_within_timeframe_seconds(created_utc, max_oldness_seconds, current_time):
-    buffer_seconds = max_oldness_seconds * 0.80  # Apply 20% buffer
-    return (current_time - created_utc) <= buffer_seconds
+    return (current_time - created_utc) <= max_oldness_seconds
 
 def get_age_string(created_utc, current_time):
     age_seconds = current_time - created_utc
@@ -130,7 +129,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                 post_created_at = post_info.get('created_utc', 0)
 
                 if not is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
-                    logging.info(f"Skipping old post: {post_permalink}")
+                    #logging.info(f"Skipping old post: {post_permalink}")
                     continue  # Log old post but continue to fetch comments
 
                 await fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time)
