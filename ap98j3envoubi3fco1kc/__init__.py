@@ -117,6 +117,9 @@ def post_process_item(item):
         logging.warning(f"[Reddit] failed to correct the URL of item {item.url}")
     return item
 
+
+
+
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
     try:
         comments_url = f"https://www.reddit.com{post_permalink}.json"
@@ -158,6 +161,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                 )
 
                 if await collector.add_item(item, comment_id):
+                    print(f"New valid comment found: {comment_content}")
                     yield item
     except GeneratorExit:
         raise
@@ -200,6 +204,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                     )
 
                     if await collector.add_item(item, post_id):
+                        print(f"New valid post found: {post_content}")
                         yield item
 
                 async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
@@ -211,6 +216,8 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         raise
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
+
+
 
 async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
     try:
