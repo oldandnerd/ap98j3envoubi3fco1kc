@@ -136,61 +136,6 @@ def post_process_item(item):
         logging.warning(f"[Reddit] failed to correct the URL of item {item.url}")
     return item
 
-async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
-    try:
-        comments_url = f"https://www.reddit.com{post_permalink}.json"
-        async for comments_json in fetch_with_proxy(session, comments_url, collector):
-            if not comments_json or len(comments_json) <= 1:
-                logging.info("No comments found or invalid response in fetch_comments")
-                return
-
-            comments = comments_json[1]['data']['children']
-            for comment in comments:
-                if collector.should_stop_fetching():
-                    logging.info("Stopping fetch_comments due to max items collected")
-                    return
-
-                if comment['kind'] != 't1':
-                    logging.info(f"Skipping non-comment item: {comment['kind']}")
-                    continue
-
-                comment_data = comment['data']
-                comment_created_at = comment_data['created_utc']
-
-                # Skip comments by AutoModerator
-                if comment_data.get('author') == 'AutoModerator':
-                    logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
-                    continue
-
-                if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
-                    continue
-
-                comment_content = comment_data.get('body', '[deleted]')
-                comment_author = comment_data.get('author', '[unknown]')
-                comment_url = f"https://reddit.com{comment_data['permalink']}"
-                comment_id = comment_data['name']  # Extracting the comment ID
-
-                if len(comment_content) < min_post_length:
-                    logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
-                    continue
-
-                item = Item(
-                    content=Content(comment_content),
-                    author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                    created_at=CreatedAt(format_timestamp(comment_created_at)),
-                    domain=Domain("reddit.com"),
-                    url=Url(comment_url),
-                )
-
-                if await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
-                    logging.info(f"New valid comment found: {item}")
-                    yield item
-    except GeneratorExit:
-        logging.info("GeneratorExit received in fetch_comments, exiting gracefully.")
-        raise
-    except Exception as e:
-        logging.error(f"Error in fetch_comments: {e}")
-
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
     try:
         async for response_json in fetch_with_proxy(session, subreddit_url, collector):
@@ -233,14 +178,49 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         logging.info(f"New valid post found: {item}")
                         yield item
 
-                # Fetch comments for all posts, regardless of age
-                async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
-                    try:
-                        if is_valid_item(comment, min_post_length):
-                            yield comment
-                    except GeneratorExit:
-                        logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
-                        raise
+                # Process comments included in the same JSON response
+                comments = response_json[1]['data']['children']
+                for comment in comments:
+                    if collector.should_stop_fetching():
+                        logging.info("Stopping fetch_comments due to max items collected")
+                        return
+
+                    if comment['kind'] != 't1':
+                        logging.info(f"Skipping non-comment item: {comment['kind']}")
+                        continue
+
+                    comment_data = comment['data']
+                    comment_created_at = comment_data['created_utc']
+
+                    # Skip comments by AutoModerator
+                    if comment_data.get('author') == 'AutoModerator':
+                        logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
+                        continue
+
+                    if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
+                        continue
+
+                    comment_content = comment_data.get('body', '[deleted]')
+                    comment_author = comment_data.get('author', '[unknown]')
+                    comment_url = f"https://reddit.com{comment_data['permalink']}"
+                    comment_id = comment_data['name']  # Extracting the comment ID
+
+                    if len(comment_content) < min_post_length:
+                        logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
+                        continue
+
+                    comment_item = Item(
+                        content=Content(comment_content),
+                        author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                        created_at=CreatedAt(format_timestamp(comment_created_at)),
+                        domain=Domain("reddit.com"),
+                        url=Url(comment_url),
+                    )
+
+                    if await collector.add_item(comment_item, comment_id):  # Using comment_id to avoid duplicates
+                        logging.info(f"New valid comment found: {comment_item}")
+                        yield comment_item
+
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         raise
