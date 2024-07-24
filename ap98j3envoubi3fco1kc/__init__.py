@@ -257,30 +257,44 @@ def is_valid_item(item, min_post_length):
         return True
 
 async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
-    try:
-        async with semaphore:
-            for attempt in range(nb_subreddit_attempts):
+    failed_subreddits = []
+    async with semaphore:
+        for attempt in range(1):
+            try:
+                async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
+                    try:
+                        yield item
+                    except GeneratorExit:
+                        logging.info("GeneratorExit received in fetch_posts within limited_fetch, exiting gracefully.")
+                        raise
+            except GeneratorExit:
+                logging.info("GeneratorExit received inside attempt loop in limited_fetch, exiting gracefully.")
+                raise
+            except Exception as e:
+                logging.error(f"Error inside attempt loop in limited_fetch: {e}")
+                failed_subreddits.append(subreddit_url)
+
+        # Retry the failed subreddits
+        for attempt in range(nb_subreddit_attempts - 1):
+            if not failed_subreddits:
+                break
+            logging.info(f"Retrying failed subreddits, attempt {attempt + 2}")
+            current_failed = []
+            for subreddit_url in failed_subreddits:
                 try:
                     async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
                         try:
                             yield item
                         except GeneratorExit:
-                            logging.info("GeneratorExit received in fetch_posts within limited_fetch, exiting gracefully.")
+                            logging.info("GeneratorExit received in fetch_posts within limited_fetch retries, exiting gracefully.")
                             raise
-                    if collector.should_stop_fetching():
-                        logging.info("Stopping limited_fetch due to max items collected")
-                        break
                 except GeneratorExit:
-                    logging.info("GeneratorExit received inside attempt loop in limited_fetch, exiting gracefully.")
+                    logging.info("GeneratorExit received inside retry loop in limited_fetch, exiting gracefully.")
                     raise
                 except Exception as e:
-                    logging.error(f"Error inside attempt loop in limited_fetch: {e}")
-                    return
-    except GeneratorExit:
-        logging.info("GeneratorExit received in limited_fetch, exiting gracefully.")
-        raise
-    except Exception as e:
-        logging.error(f"Error in limited_fetch: {e}")
+                    logging.error(f"Error inside retry loop in limited_fetch: {e}")
+                    current_failed.append(subreddit_url)
+            failed_subreddits = current_failed
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
