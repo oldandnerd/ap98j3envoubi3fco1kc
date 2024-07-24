@@ -201,6 +201,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
 
 
 
+
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
     logging.info("Entering fetch_posts")
     try:
