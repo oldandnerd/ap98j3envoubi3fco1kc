@@ -103,19 +103,19 @@ def extract_subreddit_name(input_string):
 
 def post_process_item(item):
     try:
-        if len(item.content.text) > 10:
-            subreddit_name = extract_subreddit_name(item.url.text)
+        if len(item.content.value) > 10:
+            subreddit_name = extract_subreddit_name(item.url.value)
             if subreddit_name is None:
                 return item
             segmented_subreddit_strs = segment(subreddit_name)
             segmented_subreddit_name = " ".join(segmented_subreddit_strs)
-            item.content = Content(item.content.text + ". - " + segmented_subreddit_name + " ," + subreddit_name)
+            item.content = Content(item.content.value + ". - " + segmented_subreddit_name + " ," + subreddit_name)
     except Exception as e:
         logging.exception(f"[Reddit post_process_item] Word segmentation failed: {e}, ignoring...")
     try:
-        item.url = Url(correct_reddit_url(item.url.text))
+        item.url = Url(correct_reddit_url(item.url.value))
     except:
-        logging.warning(f"[Reddit] failed to correct the URL of item {item.url.text}")
+        logging.warning(f"[Reddit] failed to correct the URL of item {item.url.value}")
     return item
 
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
@@ -221,7 +221,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         try:
             for index, item in enumerate(collector.items, start=1):
-                created_at_timestamp = datetime.strptime(item.created_at.text, '%Y-%m-%dT%H:%M:%SZ').timestamp()
+                created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
                 age_string = get_age_string(created_at_timestamp, current_time)
                 item = post_process_item(item)
                 logging.info(f"Found comment {index} and it's {age_string}: {item}")
