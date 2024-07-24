@@ -103,19 +103,19 @@ def extract_subreddit_name(input_string):
 
 def post_process_item(item):
     try:
-        if len(item.content.value) > 10:
-            subreddit_name = extract_subreddit_name(item.url.value)
+        if len(item.content) > 10:
+            subreddit_name = extract_subreddit_name(item.url)
             if subreddit_name is None:
                 return item
             segmented_subreddit_strs = segment(subreddit_name)
             segmented_subreddit_name = " ".join(segmented_subreddit_strs)
-            item.content = Content(item.content.value + ". - " + segmented_subreddit_name + " ," + subreddit_name)
+            item.content = Content(item.content + ". - " + segmented_subreddit_name + " ," + subreddit_name)
     except Exception as e:
         logging.exception(f"[Reddit post_process_item] Word segmentation failed: {e}, ignoring...")
     try:
-        item.url = Url(correct_reddit_url(item.url.value))
+        item.url = Url(correct_reddit_url(item.url))
     except:
-        logging.warning(f"[Reddit] failed to correct the URL of item {item.url.value}")
+        logging.warning(f"[Reddit] failed to correct the URL of item {item.url}")
     return item
 
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
