@@ -148,7 +148,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         async for response_json in fetch_with_proxy(session, subreddit_url, collector):
             if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
                 logging.info("No posts found or invalid response in fetch_posts")
-                return
+                continue
 
             posts = response_json['data']['children']
             for post in posts:
@@ -188,47 +188,50 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                 # Process comments included in the same JSON response
                 comment_data = {}
                 try:
-                    comments = response_json[1]['data']['children']
-                    for comment in comments:
-                        if collector.should_stop_fetching():
-                            logging.info("Stopping fetch_comments due to max items collected")
-                            return
+                    if len(response_json) > 1 and 'data' in response_json[1] and 'children' in response_json[1]['data']:
+                        comments = response_json[1]['data']['children']
+                        for comment in comments:
+                            if collector.should_stop_fetching():
+                                logging.info("Stopping fetch_comments due to max items collected")
+                                return
 
-                        if comment['kind'] != 't1':
-                            logging.info(f"Skipping non-comment item: {comment['kind']}")
-                            continue
+                            if comment['kind'] != 't1':
+                                logging.info(f"Skipping non-comment item: {comment['kind']}")
+                                continue
 
-                        comment_data = comment['data']
-                        comment_created_at = comment_data['created_utc']
+                            comment_data = comment['data']
+                            comment_created_at = comment_data['created_utc']
 
-                        # Skip comments by AutoModerator
-                        if comment_data.get('author') == 'AutoModerator':
-                            logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
-                            continue
+                            # Skip comments by AutoModerator
+                            if comment_data.get('author') == 'AutoModerator':
+                                logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
+                                continue
 
-                        if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
-                            continue
+                            if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
+                                continue
 
-                        comment_content = comment_data.get('body', '[deleted]')
-                        comment_author = comment_data.get('author', '[unknown]')
-                        comment_url = f"https://reddit.com{comment_data['permalink']}"
-                        comment_id = comment_data['name']  # Extracting the comment ID
+                            comment_content = comment_data.get('body', '[deleted]')
+                            comment_author = comment_data.get('author', '[unknown]')
+                            comment_url = f"https://reddit.com{comment_data['permalink']}"
+                            comment_id = comment_data['name']  # Extracting the comment ID
 
-                        if len(comment_content) < min_post_length:
-                            logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
-                            continue
+                            if len(comment_content) < min_post_length:
+                                logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
+                                continue
 
-                        comment_item = Item(
-                            content=Content(comment_content),
-                            author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                            created_at=CreatedAt(format_timestamp(comment_created_at)),
-                            domain=Domain("reddit.com"),
-                            url=Url(comment_url),
-                        )
+                            comment_item = Item(
+                                content=Content(comment_content),
+                                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                                created_at=CreatedAt(format_timestamp(comment_created_at)),
+                                domain=Domain("reddit.com"),
+                                url=Url(comment_url),
+                            )
 
-                        if await collector.add_item(comment_item, comment_id):  # Using comment_id to avoid duplicates
-                            logging.info(f"New valid comment found: {comment_item}")
-                            yield comment_item
+                            if await collector.add_item(comment_item, comment_id):  # Using comment_id to avoid duplicates
+                                logging.info(f"New valid comment found: {comment_item}")
+                                yield comment_item
+                    else:
+                        logging.info("No comments section found in the response JSON")
                 except Exception as e:
                     logging.error(f"Error processing comments: {e}, Comment data: {comment_data}")
                     logging.error(traceback.format_exc())
@@ -239,7 +242,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}, Post data: {post_info}")
         logging.error(traceback.format_exc())
-
 
 
 
