@@ -245,7 +245,11 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
                 # Fetch comments for all posts, regardless of age
                 async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
-                    yield comment
+                    try:
+                        yield comment
+                    except GeneratorExit:
+                        logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
+                        raise
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         raise
@@ -256,14 +260,19 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
 
 
+
 async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
     logging.info("Entering limited_fetch")
     try:
         async with semaphore:
             for attempt in range(nb_subreddit_attempts):
                 try:
-                    async for comment in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
-                        yield comment
+                    async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
+                        try:
+                            yield item
+                        except GeneratorExit:
+                            logging.info("GeneratorExit received in fetch_posts within limited_fetch, exiting gracefully.")
+                            raise
                     if collector.should_stop_fetching():
                         logging.info("Stopping limited_fetch due to max items collected")
                         break
@@ -280,6 +289,7 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
         logging.error(f"Error in limited_fetch: {e}")
     finally:
         logging.info("Exiting limited_fetch")
+
 
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
@@ -311,7 +321,11 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
                 for task in tasks:
                     async for item in task:
-                        yield item
+                        try:
+                            yield item
+                        except GeneratorExit:
+                            logging.info("GeneratorExit received in limited_fetch within query, exiting gracefully.")
+                            raise
 
                 for index, item in enumerate(collector.items, start=1):
                     created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
