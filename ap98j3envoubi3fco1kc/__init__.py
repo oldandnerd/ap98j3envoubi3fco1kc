@@ -230,6 +230,8 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         subreddit_urls = url_response['urls']
 
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+        tasks = []
+
         async def limited_fetch(subreddit_url):
             for attempt in range(nb_subreddit_attempts):
                 async with semaphore:
@@ -237,7 +239,11 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 if collector.should_stop_fetching():
                     break
 
-        tasks = [limited_fetch(subreddit_url) for subreddit_url in subreddit_urls]
+        for subreddit_url in subreddit_urls:
+            if collector.should_stop_fetching():
+                break
+            tasks.append(limited_fetch(subreddit_url))
+
         await asyncio.gather(*tasks, return_exceptions=True)
 
         try:
