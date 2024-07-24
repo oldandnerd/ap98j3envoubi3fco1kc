@@ -47,9 +47,11 @@ class ContentCollector:
 
 async def fetch_with_proxy(session, url):
     headers = {'User-Agent': USER_AGENT}
+    logging.info(f"Fetching URL through proxy: {url}")
     try:
         async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
             response.raise_for_status()
+            logging.info(f"Successfully fetched data from {url}")
             return await response.json()
     except ClientConnectorError as e:
         logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
@@ -208,6 +210,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                 )
 
                 if await collector.add_item(item, post_id):
+                    logging.info(f"Collected post: {post_id} created at {format_timestamp(post_created_at)}")
                     yield item
         else:
             logging.info(f"Skipping old post: {post_id} created at {format_timestamp(post_created_at)}")
@@ -245,11 +248,13 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             return
 
         subreddit_urls = url_response['urls']
+        logging.info(f"Fetched subreddit URLs: {subreddit_urls}")
 
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
         async def limited_fetch(subreddit_url):
             for attempt in range(nb_subreddit_attempts):
                 async with semaphore:
+                    logging.info(f"Processing subreddit URL: {subreddit_url}, attempt: {attempt+1}")
                     await fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time)
                 if collector.should_stop_fetching():
                     break
