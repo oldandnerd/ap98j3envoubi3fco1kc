@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 7  # default value if not provided
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
 
 load()  # Load the wordsegment library data
 
@@ -23,14 +23,16 @@ class CommentCollector:
         self.total_items_collected = 0
         self.max_items = max_items
         self.items = []
+        self.processed_ids = set()  # To track processed comment IDs
         self.lock = asyncio.Lock()
         self.stop_fetching = False
         self.logged_stop_message = False
 
-    async def add_item(self, item):
+    async def add_item(self, item, item_id):
         async with self.lock:
-            if self.total_items_collected < self.max_items:
+            if self.total_items_collected < self.max_items and item_id not in self.processed_ids:
                 self.items.append(item)
+                self.processed_ids.add(item_id)
                 self.total_items_collected += 1
                 if self.total_items_collected >= self.max_items:
                     self.stop_fetching = True
@@ -145,6 +147,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         comment_content = comment_data.get('body', '[deleted]')
         comment_author = comment_data.get('author', '[unknown]')
         comment_url = f"https://reddit.com{comment_data['permalink']}"
+        comment_id = comment_data['id']
 
         if len(comment_content) >= min_post_length:
             item = Item(
@@ -155,7 +158,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                 url=Url(comment_url),
             )
 
-            if not await collector.add_item(item):
+            if not await collector.add_item(item, comment_id):
                 return
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
