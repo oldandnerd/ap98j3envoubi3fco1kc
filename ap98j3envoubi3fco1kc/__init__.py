@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 7  # default value if not provided
 
 load()  # Load the wordsegment library data
 
