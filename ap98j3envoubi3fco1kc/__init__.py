@@ -176,8 +176,15 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         tasks = [limited_fetch(subreddit_url) for subreddit_url in subreddit_urls]
         await asyncio.gather(*tasks, return_exceptions=True)
 
-        for index, item in enumerate(collector.items, start=1):
-            created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
-            age_string = get_age_string(created_at_timestamp, current_time)
-            logging.info(f"Found comment {index} and it's {age_string}: {item}")
-            yield item
+        try:
+            for index, item in enumerate(collector.items, start=1):
+                created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
+                age_string = get_age_string(created_at_timestamp, current_time)
+                logging.info(f"Found comment {index} and it's {age_string}: {item}")
+                yield item
+        except GeneratorExit:
+            logging.info("Async generator received GeneratorExit, performing cleanup.")
+            # Perform any necessary cleanup here before the generator is closed.
+            raise
+        finally:
+            logging.info("End of iterator - StopAsyncIteration")
