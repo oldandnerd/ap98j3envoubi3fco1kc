@@ -90,6 +90,7 @@ async def fetch_with_proxy(session, url, collector) -> AsyncGenerator[Dict, None
 
 
 
+
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
@@ -202,6 +203,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
 
 
 
+
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
     logging.info("Entering fetch_posts")
     try:
@@ -258,6 +260,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         logging.error(f"Error in fetch_posts: {e}")
     finally:
         logging.info("Exiting fetch_posts")
+
 
 
 
