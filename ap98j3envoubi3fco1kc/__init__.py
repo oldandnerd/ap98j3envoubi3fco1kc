@@ -181,6 +181,9 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_comments, exiting gracefully.")
         return
+    except Exception as e:
+        logging.error(f"Error in fetch_comments: {e}")
+        return
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
     try:
@@ -209,18 +212,24 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         return
+    except Exception as e:
+        logging.error(f"Error in fetch_posts: {e}")
+        return
 
 async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
-    async with semaphore:
-        for attempt in range(nb_subreddit_attempts):
-            try:
+    try:
+        async with semaphore:
+            for attempt in range(nb_subreddit_attempts):
                 async for comment in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
                     yield comment
                 if collector.should_stop_fetching():
                     break
-            except GeneratorExit:
-                logging.info("GeneratorExit received in limited_fetch, exiting gracefully.")
-                return
+    except GeneratorExit:
+        logging.info("GeneratorExit received in limited_fetch, exiting gracefully.")
+        return
+    except Exception as e:
+        logging.error(f"Error in limited_fetch: {e}")
+        return
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
@@ -237,26 +246,33 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     current_time = datetime.now(timezone.utc).timestamp()
 
     async with aiohttp.ClientSession() as session:
-        async for url_response in fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector):
-            if not url_response or 'urls' not in url_response:
-                logging.error("Failed to get subreddit URLs from proxy")
-                return
+        try:
+            async for url_response in fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector):
+                if not url_response or 'urls' not in url_response:
+                    logging.error("Failed to get subreddit URLs from proxy")
+                    return
 
-            subreddit_urls = url_response['urls']
+                subreddit_urls = url_response['urls']
 
-            semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-            tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) for subreddit_url in subreddit_urls]
+                semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+                tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) for subreddit_url in subreddit_urls]
 
-            for task in tasks:
-                async for comment in task:
-                    yield comment
+                for task in tasks:
+                    async for comment in task:
+                        yield comment
 
-            for index, item in enumerate(collector.items, start=1):
-                created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
-                age_string = get_age_string(created_at_timestamp, current_time)
-                item = post_process_item(item)
-                logging.info(f"Found comment {index} and it's {age_string}: {item}")
-                yield item
+                for index, item in enumerate(collector.items, start=1):
+                    created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
+                    age_string = get_age_string(created_at_timestamp, current_time)
+                    item = post_process_item(item)
+                    logging.info(f"Found comment {index} and it's {age_string}: {item}")
+                    yield item
+        except GeneratorExit:
+            logging.info("GeneratorExit received in query, exiting gracefully.")
+            return
+        except Exception as e:
+            logging.error(f"Error in query: {e}")
+            return
 
     logging.info("Cleaning up: closing session.")
     logging.info("Session closed.")
