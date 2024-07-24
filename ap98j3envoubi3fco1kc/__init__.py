@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 7  # default value if not provided
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
 
 load()  # Load the wordsegment library data
 
@@ -164,8 +164,8 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
             url=Url(comment_url),
         )
 
-        if not await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
-            return
+        if await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
+            yield item
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
     response_json = await fetch_with_proxy(session, subreddit_url)
