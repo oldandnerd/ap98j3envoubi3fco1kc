@@ -2,8 +2,10 @@ import aiohttp
 import asyncio
 import hashlib
 import logging
+import re
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict
+from wordsegment import load, segment
 from exorde_data import Item, Content, Author, CreatedAt, Url, Domain
 from aiohttp import ClientConnectorError
 
@@ -11,7 +13,10 @@ logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-MAX_CONCURRENT_TASKS = 20
+MAX_CONCURRENT_TASKS = 10
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
+
+load()  # Load the wordsegment library data
 
 class CommentCollector:
     def __init__(self, max_items):
@@ -83,6 +88,36 @@ def get_age_string(created_utc, current_time):
     else:
         return f"{int(age_seconds)} seconds old"
 
+def correct_reddit_url(url):
+    parts = url.split("https://reddit.comhttps://", 1)
+    if len(parts) == 2:
+        corrected_url = "https://" + parts[1]
+        return corrected_url
+    return url
+
+def extract_subreddit_name(input_string):
+    match = re.search(r'r/([^/]+)', input_string)
+    if match:
+        return match.group(1)
+    return None
+
+def post_process_item(item):
+    try:
+        if len(item['content']) > 10:
+            subreddit_name = extract_subreddit_name(item["url"])
+            if subreddit_name is None:
+                return item
+            segmented_subreddit_strs = segment(subreddit_name)
+            segmented_subreddit_name = " ".join(segmented_subreddit_strs)
+            item["content"] = item["content"] + ". - " + segmented_subreddit_name + " ," + subreddit_name
+    except Exception as e:
+        logging.exception(f"[Reddit post_process_item] Word segmentation failed: {e}, ignoring...")
+    try:
+        item["url"] = correct_reddit_url(item["url"])
+    except:
+        logging.warning(f"[Reddit] failed to correct the URL of item %s", item["url"])
+    return item
+
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
     comments_url = f"https://www.reddit.com{post_permalink}.json"
     comments_json = await fetch_with_proxy(session, comments_url)
@@ -108,13 +143,13 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         comment_url = f"https://reddit.com{comment_data['permalink']}"
 
         if len(comment_content) >= min_post_length:
-            item = Item(
-                content=Content(comment_content),
-                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                created_at=CreatedAt(format_timestamp(comment_created_at)),
-                domain=Domain("reddit.com"),
-                url=Url(comment_url),
-            )
+            item = {
+                'content': comment_content,
+                'author': hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest(),
+                'created_at': format_timestamp(comment_created_at),
+                'domain': "reddit.com",
+                'url': comment_url,
+            }
 
             if not await collector.add_item(item):
                 return
@@ -155,7 +190,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
     min_post_length = parameters.get('min_post_length')
     batch_size = parameters.get('batch_size', 20)
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 7)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS)
 
     # Log input parameters
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
@@ -186,8 +221,9 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         try:
             for index, item in enumerate(collector.items, start=1):
-                created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
+                created_at_timestamp = datetime.strptime(item['created_at'], '%Y-%m-%dT%H:%M:%SZ').timestamp()
                 age_string = get_age_string(created_at_timestamp, current_time)
+                item = post_process_item(item)
                 logging.info(f"Found comment {index} and it's {age_string}: {item}")
                 yield item
         except GeneratorExit:
