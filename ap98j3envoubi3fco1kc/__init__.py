@@ -46,7 +46,7 @@ class CommentCollector:
     def should_stop_fetching(self):
         return self.stop_fetching
 
-async def fetch_with_proxy(session, url, collector):
+async def fetch_with_proxy(session, url, collector) -> AsyncGenerator[Dict, None]:
     headers = {'User-Agent': USER_AGENT}
     retries = 0
     while retries < MAX_RETRIES_PROXY:
@@ -56,7 +56,8 @@ async def fetch_with_proxy(session, url, collector):
         try:
             async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
                 response.raise_for_status()
-                return await response.json()
+                yield await response.json()
+                return
         except ClientConnectorError as e:
             logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
             logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
@@ -74,12 +75,11 @@ async def fetch_with_proxy(session, url, collector):
                     logging.error(f"Error fetching URL {url}: Subreddit is private.")
                 else:
                     logging.error(f"Error fetching URL {url}: {e.message}")
-                return None
+                return
         except Exception as e:
             logging.error(f"Error fetching URL {url}: {e}")
-            return None
+            return
     logging.error(f"Maximum retries reached for URL {url}. Skipping.")
-    return None
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -134,73 +134,73 @@ def post_process_item(item):
 
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
     comments_url = f"https://www.reddit.com{post_permalink}.json"
-    comments_json = await fetch_with_proxy(session, comments_url, collector)
-    if not comments_json or len(comments_json) <= 1:
-        return
-
-    comments = comments_json[1]['data']['children']
-    for comment in comments:
-        if collector.should_stop_fetching():
+    async for comments_json in fetch_with_proxy(session, comments_url, collector):
+        if not comments_json or len(comments_json) <= 1:
             return
 
-        if comment['kind'] != 't1':
-            logging.info(f"Skipping non-comment item: {comment['kind']}")
-            continue
+        comments = comments_json[1]['data']['children']
+        for comment in comments:
+            if collector.should_stop_fetching():
+                return
 
-        comment_data = comment['data']
-        comment_created_at = comment_data['created_utc']
+            if comment['kind'] != 't1':
+                logging.info(f"Skipping non-comment item: {comment['kind']}")
+                continue
 
-        # Skip comments by AutoModerator
-        if comment_data.get('author') == 'AutoModerator':
-            logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
-            continue
+            comment_data = comment['data']
+            comment_created_at = comment_data['created_utc']
 
-        if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
-            continue
+            # Skip comments by AutoModerator
+            if comment_data.get('author') == 'AutoModerator':
+                logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
+                continue
 
-        comment_content = comment_data.get('body', '[deleted]')
-        comment_author = comment_data.get('author', '[unknown]')
-        comment_url = f"https://reddit.com{comment_data['permalink']}"
-        comment_id = comment_data['name']  # Extracting the comment ID
+            if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
+                continue
 
-        if len(comment_content) < min_post_length:
-            logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
-            continue
+            comment_content = comment_data.get('body', '[deleted]')
+            comment_author = comment_data.get('author', '[unknown]')
+            comment_url = f"https://reddit.com{comment_data['permalink']}"
+            comment_id = comment_data['name']  # Extracting the comment ID
 
-        item = Item(
-            content=Content(comment_content),
-            author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-            created_at=CreatedAt(format_timestamp(comment_created_at)),
-            domain=Domain("reddit.com"),
-            url=Url(comment_url),
-        )
+            if len(comment_content) < min_post_length:
+                logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
+                continue
 
-        if await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
-            yield item
+            item = Item(
+                content=Content(comment_content),
+                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                created_at=CreatedAt(format_timestamp(comment_created_at)),
+                domain=Domain("reddit.com"),
+                url=Url(comment_url),
+            )
+
+            if await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
+                yield item
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
-    response_json = await fetch_with_proxy(session, subreddit_url, collector)
-    if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
-        return
-
-    posts = response_json['data']['children']
-    for post in posts:
-        if collector.should_stop_fetching():
+    async for response_json in fetch_with_proxy(session, subreddit_url, collector):
+        if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
             return
 
-        post_kind = post.get('kind')
-        post_info = post.get('data', {})
+        posts = response_json['data']['children']
+        for post in posts:
+            if collector.should_stop_fetching():
+                return
 
-        if post_kind != 't3':
-            logging.info(f"Skipping non-post item: {post_kind}")
-            continue
+            post_kind = post.get('kind')
+            post_info = post.get('data', {})
 
-        post_permalink = post_info.get('permalink')
-        post_created_at = post_info.get('created_utc', 0)
+            if post_kind != 't3':
+                logging.info(f"Skipping non-post item: {post_kind}")
+                continue
 
-        # Fetch comments for all posts, regardless of age
-        async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
-            yield comment
+            post_permalink = post_info.get('permalink')
+            post_created_at = post_info.get('created_utc', 0)
+
+            # Fetch comments for all posts, regardless of age
+            async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
+                yield comment
 
 async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
     async with semaphore:
@@ -225,26 +225,26 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     current_time = datetime.now(timezone.utc).timestamp()
 
     async with aiohttp.ClientSession() as session:
-        url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector)
-        if not url_response or 'urls' not in url_response:
-            logging.error("Failed to get subreddit URLs from proxy")
-            return
+        async for url_response in fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector):
+            if not url_response or 'urls' not in url_response:
+                logging.error("Failed to get subreddit URLs from proxy")
+                return
 
-        subreddit_urls = url_response['urls']
+            subreddit_urls = url_response['urls']
 
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-        tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) for subreddit_url in subreddit_urls]
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+            tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) for subreddit_url in subreddit_urls]
 
-        for task in tasks:
-            async for comment in task:
-                yield comment
+            for task in tasks:
+                async for comment in task:
+                    yield comment
 
-        for index, item in enumerate(collector.items, start=1):
-            created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
-            age_string = get_age_string(created_at_timestamp, current_time)
-            item = post_process_item(item)
-            logging.info(f"Found comment {index} and it's {age_string}: {item}")
-            yield item
+            for index, item in enumerate(collector.items, start=1):
+                created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
+                age_string = get_age_string(created_at_timestamp, current_time)
+                item = post_process_item(item)
+                logging.info(f"Found comment {index} and it's {age_string}: {item}")
+                yield item
 
     logging.info("Cleaning up: closing session.")
     logging.info("Session closed.")
