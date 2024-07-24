@@ -4,7 +4,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict
-from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
+from exorde_data import Item, Content, Author, CreatedAt, Url, Domain
 from aiohttp import ClientConnectorError
 
 logging.basicConfig(level=logging.INFO)
@@ -112,7 +112,6 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                 content=Content(comment_content),
                 author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
                 created_at=CreatedAt(format_timestamp(comment_created_at)),
-                title=Title(post_permalink),
                 domain=Domain("reddit.com"),
                 url=Url(comment_url),
             )
