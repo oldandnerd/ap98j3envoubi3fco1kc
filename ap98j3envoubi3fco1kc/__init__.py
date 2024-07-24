@@ -122,100 +122,80 @@ def post_process_item(item):
 
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
     comments_url = f"https://www.reddit.com{post_permalink}.json"
-    logging.info(f"Fetching comments from URL: {comments_url}")
-    try:
-        comments_json = await fetch_with_proxy(session, comments_url)
-        if not comments_json or len(comments_json) <= 1:
-            logging.error(f"Failed to fetch or parse comments for post: {comments_url}")
+    comments_json = await fetch_with_proxy(session, comments_url)
+    if not comments_json or len(comments_json) <= 1:
+        return
+
+    comments = comments_json[1]['data']['children']
+    for comment in comments:
+        if collector.should_stop_fetching():
             return
 
-        comments = comments_json[1]['data']['children']
-        logging.info(f"Fetched {len(comments)} comments for post: {post_permalink}")
+        if comment['kind'] != 't1':
+            logging.info(f"Skipping non-comment item: {comment['kind']}")
+            continue
 
-        for comment in comments:
-            if collector.should_stop_fetching():
-                return
+        comment_data = comment['data']
+        comment_created_at = comment_data['created_utc']
 
-            if comment['kind'] != 't1':
-                logging.info(f"Skipping non-comment item: {comment['kind']}")
-                continue
+        # Skip comments by AutoModerator
+        if comment_data.get('author') == 'AutoModerator':
+            logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
+            continue
 
-            comment_data = comment['data']
-            comment_created_at = comment_data['created_utc']
+        if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
+            logging.info(f"Skipping old comment: {comment_data['id']} created at {comment_created_at}")
+            continue
 
-            # Skip comments by AutoModerator
-            if comment_data.get('author') == 'AutoModerator':
-                logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
-                continue
+        comment_content = comment_data.get('body', '[deleted]')
+        comment_author = comment_data.get('author', '[unknown]')
+        comment_url = f"https://reddit.com{comment_data['permalink']}"
+        comment_id = comment_data['name']  # Extracting the comment ID
 
-            if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
-                logging.info(f"Skipping old comment: {comment_data['id']} created at {comment_created_at}")
-                continue
+        if len(comment_content) < min_post_length:
+            logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
+            continue
 
-            comment_content = comment_data.get('body', '[deleted]')
-            comment_author = comment_data.get('author', '[unknown]')
-            comment_url = f"https://reddit.com{comment_data['permalink']}"
-            comment_id = comment_data['name']  # Extracting the comment ID
+        item = Item(
+            content=Content(comment_content),
+            author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+            created_at=CreatedAt(format_timestamp(comment_created_at)),
+            domain=Domain("reddit.com"),
+            url=Url(comment_url),
+        )
 
-            if len(comment_content) < min_post_length:
-                logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
-                continue
-
-            item = Item(
-                content=Content(comment_content),
-                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                created_at=CreatedAt(format_timestamp(comment_created_at)),
-                domain=Domain("reddit.com"),
-                url=Url(comment_url),
-            )
-
-            if await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
-                logging.info(f"Yielding comment: {comment_id} from post: {post_permalink}")
-                yield item
-            else:
-                logging.info(f"Comment: {comment_id} already processed or max items reached")
-    except Exception as e:
-        logging.error(f"Error fetching comments from {comments_url}: {str(e)}")
-
-
-
+        if not await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
+            return
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
-    try:
-        response_json = await fetch_with_proxy(session, subreddit_url)
-        if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
-            logging.error(f"Failed to fetch or parse subreddit data for URL: {subreddit_url}")
+    response_json = await fetch_with_proxy(session, subreddit_url)
+    if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
+        return
+
+    posts = response_json['data']['children']
+    tasks = []
+    for post in posts:
+        if collector.should_stop_fetching():
             return
 
-        posts = response_json['data']['children']
-        logging.info(f"Fetched {len(posts)} items from subreddit URL: {subreddit_url}")
-        
-        tasks = []
-        for post in posts:
-            if collector.should_stop_fetching():
-                return
+        post_kind = post.get('kind')
+        post_info = post.get('data', {})
 
-            post_kind = post.get('kind')
-            post_info = post.get('data', {})
+        if post_kind != 't3':
+            logging.info(f"Skipping non-post item: {post_kind}")
+            continue
 
-            if post_kind != 't3':
-                logging.info(f"Skipping non-post item: {post_kind}")
-                continue
+        post_permalink = post_info.get('permalink')
+        post_created_at = post_info.get('created_utc', 0)
 
-            post_permalink = post_info.get('permalink')
-            logging.info(f"Processing post: {post_info.get('id')} with permalink: {post_permalink}")
+        # Fetch comments for all posts, regardless of age
+        tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
 
-            tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
+        if collector.should_stop_fetching():
+            break
 
-            if collector.should_stop_fetching():
-                break
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-    except Exception as e:
-        logging.error(f"Error fetching posts from {subreddit_url}: {str(e)}")
-
-
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
@@ -224,7 +204,6 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     batch_size = parameters.get('batch_size', 20)
     nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS)
 
-    # Log input parameters
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
                  f"maximum_items_to_collect={maximum_items_to_collect}, min_post_length={min_post_length}, "
                  f"batch_size={batch_size}, nb_subreddit_attempts={nb_subreddit_attempts}")
