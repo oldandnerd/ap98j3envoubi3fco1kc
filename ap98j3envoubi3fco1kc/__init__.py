@@ -218,29 +218,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         logging.error(f"Error in fetch_posts: {e}")
 
 
-
-async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
-    try:
-        async with semaphore:
-            for attempt in range(nb_subreddit_attempts):
-                try:
-                    async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
-                        try:
-                            yield item
-                        except GeneratorExit:
-                            raise
-                    if collector.should_stop_fetching():
-                        break
-                except GeneratorExit:
-                    raise
-                except Exception as e:
-                    logging.error(f"Error inside attempt loop in limited_fetch: {e}")
-                    return
-    except GeneratorExit:
-        raise
-    except Exception as e:
-        logging.error(f"Error in limited_fetch: {e}")
-
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
