@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict
 from wordsegment import load, segment
-from exorde_data import Item, Content, Author, CreatedAt, Url, Domain, Title
+from exorde_data import Item, Content, Author, CreatedAt, Url, Domain
 from aiohttp import ClientConnectorError
 
 logging.basicConfig(level=logging.INFO)
@@ -18,12 +18,12 @@ DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
 
 load()  # Load the wordsegment library data
 
-class ContentCollector:
+class CommentCollector:
     def __init__(self, max_items):
         self.total_items_collected = 0
         self.max_items = max_items
         self.items = []
-        self.processed_ids = set()  # To track processed content IDs
+        self.processed_ids = set()  # To track processed comment IDs
         self.lock = asyncio.Lock()
         self.stop_fetching = False
         self.logged_stop_message = False
@@ -47,11 +47,9 @@ class ContentCollector:
 
 async def fetch_with_proxy(session, url):
     headers = {'User-Agent': USER_AGENT}
-    logging.info(f"Fetching URL through proxy: {url}")
     try:
         async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
             response.raise_for_status()
-            logging.info(f"Successfully fetched data from {url}")
             return await response.json()
     except ClientConnectorError as e:
         logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
@@ -72,7 +70,7 @@ async def fetch_with_proxy(session, url):
         return None
 
 def format_timestamp(timestamp):
-    return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 def is_within_timeframe_seconds(created_utc, max_oldness_seconds, current_time):
     return (current_time - created_utc) <= max_oldness_seconds
@@ -142,11 +140,11 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
 
         # Skip comments by AutoModerator
         if comment_data.get('author') == 'AutoModerator':
-            logging.info(f"Skipping AutoModerator comment: {comment_data['name']}")
+            logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
             continue
 
         if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
-            logging.info(f"Skipping old comment: {comment_data['name']} created at {format_timestamp(comment_created_at)}")
+            logging.info(f"Skipping old comment: {comment_data['id']} created at {comment_created_at}")
             continue
 
         comment_content = comment_data.get('body', '[deleted]')
@@ -155,7 +153,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         comment_id = comment_data['name']  # Extracting the comment ID
 
         if len(comment_content) < min_post_length:
-            logging.info(f"Skipping short comment: {comment_data['name']} with length {len(comment_content)}")
+            logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
             continue
 
         item = Item(
@@ -168,8 +166,6 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
 
         if not await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
             return
-
-        logging.info(f"Collected comment: {comment_id} created at {format_timestamp(comment_created_at)}")
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
     response_json = await fetch_with_proxy(session, subreddit_url)
@@ -192,30 +188,10 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         post_permalink = post_info.get('permalink')
         post_created_at = post_info.get('created_utc', 0)
 
-        post_content = post_info.get('selftext', '[deleted]')
-        post_author = post_info.get('author', '[unknown]')
-        post_url = f"https://reddit.com{post_permalink}"
-        post_id = post_info.get('name', 'unknown')  # Extracting the post ID
-        post_title = post_info.get('title', '[no title]')
+        if not is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
+            logging.info(f"Skipping old post: {post_info['id']} created at {post_created_at}")
+            continue
 
-        if is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
-            if len(post_content) >= min_post_length:
-                item = Item(
-                    content=Content(post_content),
-                    author=Author(hashlib.sha1(bytes(post_author, encoding="utf-8")).hexdigest()),
-                    created_at=CreatedAt(format_timestamp(post_created_at)),
-                    domain=Domain("reddit.com"),
-                    url=Url(post_url),
-                    title=Title(post_title),
-                )
-
-                if await collector.add_item(item, post_id):
-                    logging.info(f"Collected post: {post_id} created at {format_timestamp(post_created_at)}")
-                    yield item
-        else:
-            logging.info(f"Skipping old post: {post_id} created at {format_timestamp(post_created_at)}")
-
-        # Always fetch comments regardless of post age
         tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
 
         if collector.should_stop_fetching():
@@ -236,7 +212,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                  f"maximum_items_to_collect={maximum_items_to_collect}, min_post_length={min_post_length}, "
                  f"batch_size={batch_size}, nb_subreddit_attempts={nb_subreddit_attempts}")
 
-    collector = ContentCollector(maximum_items_to_collect)
+    collector = CommentCollector(maximum_items_to_collect)
     current_time = datetime.now(timezone.utc).timestamp()
 
     session = aiohttp.ClientSession()
@@ -248,13 +224,11 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             return
 
         subreddit_urls = url_response['urls']
-        logging.info(f"Fetched subreddit URLs: {subreddit_urls}")
 
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
         async def limited_fetch(subreddit_url):
             for attempt in range(nb_subreddit_attempts):
                 async with semaphore:
-                    logging.info(f"Processing subreddit URL: {subreddit_url}, attempt: {attempt+1}")
                     await fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time)
                 if collector.should_stop_fetching():
                     break
@@ -264,10 +238,10 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         try:
             for index, item in enumerate(collector.items, start=1):
-                created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%d %H:%M:%S').timestamp()
+                created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
                 age_string = get_age_string(created_at_timestamp, current_time)
                 item = post_process_item(item)
-                logging.info(f"Found item {index} and it's {age_string}: {item}")
+                logging.info(f"Found comment {index} and it's {age_string}: {item}")
                 yield item
         except GeneratorExit:
             logging.info("Async generator received GeneratorExit, performing cleanup.")
