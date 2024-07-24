@@ -14,8 +14,8 @@ logging.basicConfig(level=logging.INFO)
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 10
-DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 3  # default value if not provided
-MAX_RETRIES_PROXY = 5  # Maximum number of retries for 503 errors
+DEFAULT_NUMBER_SUBREDDIT_ATTEMPTS = 7  # default value if not provided
+MAX_RETRIES_PROXY = 2  # Maximum number of retries for 503 errors
 
 load()  # Load the wordsegment library data
 
@@ -61,7 +61,7 @@ async def fetch_with_proxy(session, url):
         except aiohttp.ClientResponseError as e:
             if e.status == 503:
                 logging.info("No available IPs. Retrying in 2 seconds...")
-                await asyncio.sleep(2)
+                await asyncio.sleep(5)
                 retries += 1
             else:
                 error_message = await response.json()
