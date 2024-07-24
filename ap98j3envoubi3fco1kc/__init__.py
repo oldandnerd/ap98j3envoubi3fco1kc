@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-MAX_CONCURRENT_TASKS = 20
+MAX_CONCURRENT_TASKS = 10
 
 class CommentCollector:
     def __init__(self, max_items):
@@ -155,6 +155,10 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
     min_post_length = parameters.get('min_post_length')
     batch_size = parameters.get('batch_size', 20)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 3)  # default to 3 attempts if not specified
+
+    # Log input parameters
+    logging.info(f"[Reddit] Input parameters: {parameters}")
 
     collector = CommentCollector(maximum_items_to_collect)
     current_time = datetime.now(timezone.utc).timestamp()
@@ -169,8 +173,11 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
         async def limited_fetch(subreddit_url):
-            async with semaphore:
-                await fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time)
+            for attempt in range(nb_subreddit_attempts):
+                async with semaphore:
+                    await fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time)
+                if collector.should_stop_fetching():
+                    break
 
         tasks = [limited_fetch(subreddit_url) for subreddit_url in subreddit_urls]
         await asyncio.gather(*tasks, return_exceptions=True)
