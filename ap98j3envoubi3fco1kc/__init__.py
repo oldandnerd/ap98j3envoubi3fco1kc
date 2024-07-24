@@ -226,13 +226,14 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                             logging.info(f"New valid comment found: {comment_item}")
                             yield comment_item
                 except Exception as e:
-                    logging.error(f"Error processing comments: {e}")
+                    logging.error(f"Error processing comments: {e}, Comment data: {comment_data}")
 
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         raise
     except Exception as e:
-        logging.error(f"Error in fetch_posts: {e}")
+        logging.error(f"Error in fetch_posts: {e}, Post data: {post_info}")
+
 
 
 def is_valid_item(item, min_post_length):
