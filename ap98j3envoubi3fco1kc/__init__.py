@@ -119,7 +119,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
 
             if not await collector.add_item(item):
                 return
-            
+
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
     response_json = await fetch_with_proxy(session, subreddit_url)
     if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
@@ -177,15 +177,11 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         await asyncio.gather(*tasks, return_exceptions=True)
 
         try:
-            for item in collector.items:
-                formatted_item = {
-                    'content': item.content.value,  # Access the value of Content
-                    'created_at': item.created_at.value,  # Access the value of CreatedAt
-                    'domain': item.domain.value,  # Access the value of Domain
-                    'url': item.url.value  # Access the value of Url
-                }
-                logging.info(f"Found Reddit comment: {formatted_item}")
-                yield formatted_item
+            for index, item in enumerate(collector.items, start=1):
+                created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
+                age_string = get_age_string(created_at_timestamp, current_time)
+                logging.info(f"Found comment {index} and it's {age_string}: {item}")
+                yield item
         except GeneratorExit:
             logging.info("Async generator received GeneratorExit, performing cleanup.")
             # Perform any necessary cleanup here before the generator is closed.
