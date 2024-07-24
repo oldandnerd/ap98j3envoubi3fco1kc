@@ -43,6 +43,16 @@ async def fetch_with_proxy(session, url):
         async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
             response.raise_for_status()
             return await response.json()
+    except aiohttp.ClientResponseError as e:
+        if e.status == 404:
+            error_message = await response.json()
+            if 'reason' in error_message:
+                logging.error(f"Error fetching URL {url}: {error_message['reason']}")
+            else:
+                logging.error(f"Error fetching URL {url}: {e.message}")
+        else:
+            logging.error(f"Error fetching URL {url}: {e}")
+        return None
     except Exception as e:
         logging.error(f"Error fetching URL {url}: {e}")
         return None
