@@ -45,7 +45,7 @@ class CommentCollector:
     def should_stop_fetching(self):
         return self.stop_fetching
 
-async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerator[Dict, None]:
+async def fetch_with_proxy(session, base_url, collector, params=None) -> AsyncGenerator[Dict, None]:
     headers = {'User-Agent': USER_AGENT}
     retries = 0
     while retries < MAX_RETRIES_PROXY:
@@ -53,12 +53,12 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
             logging.info("Stopping fetch_with_proxy retries as maximum items have been collected.")
             break
         try:
-            async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers, params=params) as response:
+            async with session.get(f'{MANAGER_IP}/proxy', headers=headers, params={'url': base_url, **params}) as response:
                 response.raise_for_status()
                 yield await response.json()
                 return
         except ClientConnectorError as e:
-            logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
+            logging.error(f"Error fetching URL {base_url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
             logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
             await asyncio.sleep(10)
         except aiohttp.ClientResponseError as e:
@@ -69,16 +69,17 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
             else:
                 error_message = await response.json()
                 if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
-                    logging.error(f"Error fetching URL {url}: Subreddit is banned.")
+                    logging.error(f"Error fetching URL {base_url}: Subreddit is banned.")
                 elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
-                    logging.error(f"Error fetching URL {url}: Subreddit is private.")
+                    logging.error(f"Error fetching URL {base_url}: Subreddit is private.")
                 else:
-                    logging.error(f"Error fetching URL {url}: {e.message}")
+                    logging.error(f"Error fetching URL {base_url}: {e.message}")
                 return
         except Exception as e:
-            logging.error(f"Error fetching URL {url}: {e}")
+            logging.error(f"Error fetching URL {base_url}: {e}")
             return
-    logging.error(f"Maximum retries reached for URL {url}. Skipping.")
+    logging.error(f"Maximum retries reached for URL {base_url}. Skipping.")
+
 
 
 def format_timestamp(timestamp):
@@ -184,6 +185,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         if after:
             params['after'] = after
 
+        # Correct URL construction
         if not subreddit_url.endswith('.json'):
             subreddit_url_with_limit = f"{subreddit_url.rstrip('/')}/.json"
         else:
