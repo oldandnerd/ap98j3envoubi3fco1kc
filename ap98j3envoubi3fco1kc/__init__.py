@@ -45,7 +45,7 @@ class CommentCollector:
     def should_stop_fetching(self):
         return self.stop_fetching
 
-async def fetch_with_proxy(session, base_url, collector, params=None) -> AsyncGenerator[Dict, None]:
+async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerator[Dict, None]:
     headers = {'User-Agent': USER_AGENT}
     retries = 0
     while retries < MAX_RETRIES_PROXY:
@@ -53,23 +53,12 @@ async def fetch_with_proxy(session, base_url, collector, params=None) -> AsyncGe
             logging.info("Stopping fetch_with_proxy retries as maximum items have been collected.")
             break
         try:
-            # Construct the query string properly
-            if params:
-                query_string = "?" + "&".join([f"{key}={value}" for key, value in params.items()])
-                full_url = f"{base_url}{query_string}"
-            else:
-                full_url = base_url
-            
-            async with session.get(f'{MANAGER_IP}/proxy', headers=headers, params={'url': full_url}) as response:
+            async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers, params=params) as response:
                 response.raise_for_status()
-                json_response = await response.json()
-                if json_response is None:
-                    logging.error(f"No valid response received for URL {full_url}")
-                    return
-                yield json_response
+                yield await response.json()
                 return
         except ClientConnectorError as e:
-            logging.error(f"Error fetching URL {full_url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
+            logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
             logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
             await asyncio.sleep(10)
         except aiohttp.ClientResponseError as e:
@@ -78,23 +67,18 @@ async def fetch_with_proxy(session, base_url, collector, params=None) -> AsyncGe
                 await asyncio.sleep(2)
                 retries += 1
             else:
-                try:
-                    error_message = await response.json()
-                    if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
-                        logging.error(f"Error fetching URL {full_url}: Subreddit is banned.")
-                    elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
-                        logging.error(f"Error fetching URL {full_url}: Subreddit is private.")
-                    else:
-                        logging.error(f"Error fetching URL {full_url}: {e.message}")
-                except:
-                    logging.error(f"Error fetching URL {full_url}: {e.message}")
+                error_message = await response.json()
+                if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
+                    logging.error(f"Error fetching URL {url}: Subreddit is banned.")
+                elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
+                    logging.error(f"Error fetching URL {url}: Subreddit is private.")
+                else:
+                    logging.error(f"Error fetching URL {url}: {e.message}")
                 return
         except Exception as e:
-            logging.error(f"Error fetching URL {full_url}: {e}")
+            logging.error(f"Error fetching URL {url}: {e}")
             return
-    logging.error(f"Maximum retries reached for URL {full_url}. Skipping.")
-
-
+    logging.error(f"Maximum retries reached for URL {url}. Skipping.")
 
 
 def format_timestamp(timestamp):
@@ -200,18 +184,13 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         if after:
             params['after'] = after
 
-        # Ensure URL ends with .json
         if not subreddit_url.endswith('.json'):
             subreddit_url_with_limit = f"{subreddit_url.rstrip('/')}/.json"
         else:
             subreddit_url_with_limit = subreddit_url
 
-        # Construct the query string properly
-        query_string = "?" + "&".join([f"{key}={value}" for key, value in params.items()])
-        full_url = f"{subreddit_url_with_limit}{query_string}"
-
-        async for response_json in fetch_with_proxy(session, full_url, collector):
-            if response_json is None or 'data' not in response_json or 'children' not in response_json['data']:
+        async for response_json in fetch_with_proxy(session, subreddit_url_with_limit, collector, params=params):
+            if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
                 logging.info("No posts found or invalid response in fetch_posts")
                 return
 
@@ -275,6 +254,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
 
 
+
 def is_valid_item(item, min_post_length):
     if len(item.content) < min_post_length \
     or item.url.startswith("https://reddit.comhttps:")  \
@@ -332,10 +312,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
     session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit_per_host=MAX_CONCURRENT_TASKS))
     try:
-        # Construct the query string properly
-        get_urls_url = f"{MANAGER_IP}/get_urls?batch_size={batch_size}"
-        
-        async for url_response in fetch_with_proxy(session, get_urls_url, collector):
+        async for url_response in fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector):
             if not url_response or 'urls' not in url_response:
                 logging.error("Failed to get subreddit URLs from proxy")
                 return
