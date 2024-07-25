@@ -45,10 +45,9 @@ class CommentCollector:
     def should_stop_fetching(self):
         return self.stop_fetching
 
-async def fetch_with_proxy(session, url, collector) -> AsyncGenerator[Dict, None]:
+async def fetch_with_proxy(session, url, collector, retries=5) -> AsyncGenerator[Dict, None]:
     headers = {'User-Agent': USER_AGENT}
-    retries = 0
-    while retries < MAX_RETRIES_PROXY:
+    for attempt in range(retries):
         if collector.should_stop_fetching():
             logging.info("Stopping fetch_with_proxy retries as maximum items have been collected.")
             break
@@ -57,27 +56,19 @@ async def fetch_with_proxy(session, url, collector) -> AsyncGenerator[Dict, None
                 response.raise_for_status()
                 yield await response.json()
                 return
-        except ClientConnectorError as e:
-            logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
-            logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
-            await asyncio.sleep(10)
+        except aiohttp.ClientConnectorError as e:
+            logging.error(f"Connection error fetching URL {url}: {e}")
         except aiohttp.ClientResponseError as e:
-            if e.status == 503:
-                logging.info("No available IPs. Retrying in 2 seconds...")
-                await asyncio.sleep(2)
-                retries += 1
-            else:
-                error_message = await response.json()
-                if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
-                    logging.error(f"Error fetching URL {url}: Subreddit is banned.")
-                elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
-                    logging.error(f"Error fetching URL {url}: Subreddit is private.")
-                else:
-                    logging.error(f"Error fetching URL {url}: {e.message}")
-                return
+            logging.error(f"Response error fetching URL {url}: {e}")
+        except aiohttp.ClientConnectionError as e:
+            logging.error(f"Connection error fetching URL {url}: {e}")
         except Exception as e:
-            logging.error(f"Error fetching URL {url}: {e}")
-            return
+            logging.error(f"Unexpected error fetching URL {url}: {e}")
+
+        wait_time = 2 ** attempt
+        logging.info(f"Retrying in {wait_time} seconds...")
+        await asyncio.sleep(wait_time)
+
     logging.error(f"Maximum retries reached for URL {url}. Skipping.")
 
 def format_timestamp(timestamp):
@@ -175,7 +166,6 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100) -> AsyncGenerator[Item, None]:
     try:
-        # Append the limit to the subreddit URL
         subreddit_url_with_limit = f"{subreddit_url.rstrip('/')}/.json?limit={limit}"
         async for response_json in fetch_with_proxy(session, subreddit_url_with_limit, collector):
             if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
@@ -204,14 +194,13 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                     post_url = f"https://reddit.com{post_permalink}"
                     post_id = post_info['name']  # Extracting the post ID
 
-                    # Check if the content is valid (not empty and not just a URL)
                     if len(post_content.strip()) < min_post_length or post_content.strip().startswith('http'):
                         logging.info(f"Skipping invalid post: {post_id} with content '{post_content}'")
                         continue
 
                     item = Item(
                         title=Title(post_info.get('title', '[deleted]')),
-                        content=Content(post_content),  # Ensure content is always added
+                        content=Content(post_content),
                         author=Author(hashlib.sha1(bytes(post_author, encoding="utf-8")).hexdigest()),
                         created_at=CreatedAt(format_timestamp(post_created_at)),
                         domain=Domain("reddit.com"),
@@ -222,7 +211,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         logging.info(f"New valid post found: {item}")
                         yield item
 
-                # Fetch comments for all posts, regardless of age
                 if post_permalink:
                     async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
                         try:
@@ -238,6 +226,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         raise
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
+
 
 
 
@@ -268,7 +257,6 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
                 logging.error(f"Error inside attempt loop in limited_fetch: {e}")
                 failed_subreddits.append(subreddit_url)
 
-        # Retry the failed subreddits
         for attempt in range(nb_subreddit_attempts - 1):
             if not failed_subreddits:
                 break
