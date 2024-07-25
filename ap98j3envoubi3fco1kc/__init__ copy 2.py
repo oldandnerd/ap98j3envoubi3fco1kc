@@ -48,7 +48,6 @@ class CommentCollector:
 async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerator[Dict, None]:
     headers = {'User-Agent': USER_AGENT}
     retries = 0
-    retry_logged = False
     while retries < MAX_RETRIES_PROXY:
         if collector.should_stop_fetching():
             logging.info("Stopping fetch_with_proxy retries as maximum items have been collected.")
@@ -59,16 +58,12 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
                 yield await response.json()
                 return
         except ClientConnectorError as e:
-            if not retry_logged:
-                logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
-                logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
-                retry_logged = True
+            logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
+            logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
             await asyncio.sleep(10)
         except aiohttp.ClientResponseError as e:
             if e.status == 503:
-                if not retry_logged:
-                    logging.info("No available IPs. Retrying in 2 seconds...")
-                    retry_logged = True
+                logging.info("No available IPs. Retrying in 2 seconds...")
                 await asyncio.sleep(2)
                 retries += 1
             else:
@@ -186,8 +181,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         query_params = '&'.join([f'{key}={value}' for key, value in params.items()])
         final_url = f"{subreddit_url_with_limit}?{query_params}"
 
-        stopping_logged = False
-
         async for response_json in fetch_with_proxy(session, final_url, collector):
             if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
                 logging.info("No posts found or invalid response in fetch_posts")
@@ -196,9 +189,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
             posts = response_json['data']['children']
             for post in posts:
                 if collector.should_stop_fetching():
-                    if not stopping_logged:
-                        logging.info("Stopping fetch_posts due to max items collected")
-                        stopping_logged = True
                     return
 
                 post_kind = post.get('kind')
@@ -294,8 +284,8 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
     min_post_length = parameters.get('min_post_length')
-    batch_size = parameters.get('batch_size', 20)
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 20)
+    batch_size = parameters.get('batch_size', 15)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 15)
     post_limit = parameters.get('post_limit', 100)  # Limit for the number of posts per subreddit
 
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
