@@ -136,11 +136,12 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                     continue
 
                 comment_data = comment['data']
-                comment_created_at = comment_data['created_utc']
 
                 if comment_data.get('author') == 'AutoModerator':
                     logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
                     continue
+
+                comment_created_at = comment_data['created_utc']
 
                 if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
                     continue
@@ -172,7 +173,6 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         logging.error(f"Error in fetch_comments: {e}")
 
 
-
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
     try:
         params = {
@@ -196,6 +196,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                 return
 
             posts = response_json['data']['children']
+            tasks = []
             for post in posts:
                 if collector.should_stop_fetching():
                     logging.info("Stopping fetch_posts due to max items collected")
@@ -213,8 +214,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
                 # Fetch comments for the post regardless of whether the post meets the criteria
                 if post_permalink:
-                    async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
-                        yield comment
+                    tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
 
                 # Check if the post itself meets the criteria
                 if is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
@@ -223,7 +223,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                     post_url = f"https://reddit.com{post_permalink}"
                     post_id = post_info['name']
 
-                    if len(post_content.strip()) < min_post_length or post_content.strip().startswith('http'):
+                    if len(post_content.strip()) < min_post_length or post_content.strip().startsWith('http'):
                         logging.info(f"Skipping invalid post: {post_id} with content '{post_content}'")
                         continue
 
@@ -240,6 +240,11 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         logging.info(f"New valid post found: {item}")
                         yield item
 
+            # Await all comment fetching tasks
+            for task in asyncio.as_completed(tasks):
+                async for comment in task:
+                    yield comment
+
             new_after = response_json['data'].get('after')
             if new_after:
                 logging.info(f"Fetched page with after={new_after}")
@@ -252,6 +257,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
         yield None
+
 
 
 
@@ -325,7 +331,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
             tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) for subreddit_url in subreddit_urls]
 
-            for task in tasks:
+            for task in asyncio.as_completed(tasks):
                 async for item in task:
                     yield item
 
