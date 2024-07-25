@@ -173,6 +173,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         logging.error(f"Error in fetch_comments: {e}")
 
 
+
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
     try:
         params = {
@@ -258,8 +259,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
 
 
-
-
 def is_valid_item(item, min_post_length):
     if len(item.content) < min_post_length \
     or item.url.startswith("https://reddit.comhttps:")  \
@@ -296,9 +295,6 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             raise
         except Exception as e:
             logging.error(f"Error inside limited_fetch: {e}")
-
-
-
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
@@ -345,4 +341,3 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         await session.close()
         logging.info("Session closed.")
         logging.info("End of iterator - StopAsyncIteration")
-
