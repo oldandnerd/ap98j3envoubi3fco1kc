@@ -245,7 +245,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         logging.error(f"Error in fetch_posts: {e}")
         yield None
 
-
 def is_valid_item(content, url, min_post_length):
     if len(content.strip()) < min_post_length or content.strip().startswith('http') or \
        content == "[deleted]" or url.startswith("https://reddit.comhttps:") or not ("reddit.com" in url):

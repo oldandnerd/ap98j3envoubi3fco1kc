@@ -245,6 +245,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         logging.error(f"Error in fetch_posts: {e}")
         yield None
 
+
 def is_valid_item(content, url, min_post_length):
     if len(content.strip()) < min_post_length or content.strip().startswith('http') or \
        content == "[deleted]" or url.startswith("https://reddit.comhttps:") or not ("reddit.com" in url):
@@ -285,8 +286,8 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
     min_post_length = parameters.get('min_post_length')
-    batch_size = parameters.get('batch_size', 20)
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 20)
+    batch_size = parameters.get('batch_size', 15)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 15)
     post_limit = parameters.get('post_limit', 100)  # Limit for the number of posts per subreddit
 
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
