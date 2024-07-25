@@ -13,8 +13,8 @@ logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-MAX_CONCURRENT_TASKS = 500
-MAX_RETRIES_PROXY = 3  # Maximum number of retries for 503 errors
+MAX_CONCURRENT_TASKS = 50
+MAX_RETRIES_PROXY = 5  # Maximum number of retries for 503 errors
 
 load()  # Load the wordsegment library data
 
@@ -296,8 +296,8 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
     min_post_length = parameters.get('min_post_length')
-    batch_size = parameters.get('batch_size', 15)
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 15)
+    batch_size = parameters.get('batch_size', 10)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 10)
     post_limit = parameters.get('post_limit', 100)  # Limit for the number of posts per subreddit
 
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
