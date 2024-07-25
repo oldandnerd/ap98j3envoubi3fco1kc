@@ -55,7 +55,11 @@ async def fetch_with_proxy(session, base_url, collector, params=None) -> AsyncGe
         try:
             async with session.get(f'{MANAGER_IP}/proxy', headers=headers, params={'url': base_url, **params}) as response:
                 response.raise_for_status()
-                yield await response.json()
+                json_response = await response.json()
+                if json_response is None:
+                    logging.error(f"No valid response received for URL {base_url}")
+                    return
+                yield json_response
                 return
         except ClientConnectorError as e:
             logging.error(f"Error fetching URL {base_url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
@@ -67,18 +71,22 @@ async def fetch_with_proxy(session, base_url, collector, params=None) -> AsyncGe
                 await asyncio.sleep(2)
                 retries += 1
             else:
-                error_message = await response.json()
-                if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
-                    logging.error(f"Error fetching URL {base_url}: Subreddit is banned.")
-                elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
-                    logging.error(f"Error fetching URL {base_url}: Subreddit is private.")
-                else:
+                try:
+                    error_message = await response.json()
+                    if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
+                        logging.error(f"Error fetching URL {base_url}: Subreddit is banned.")
+                    elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
+                        logging.error(f"Error fetching URL {base_url}: Subreddit is private.")
+                    else:
+                        logging.error(f"Error fetching URL {base_url}: {e.message}")
+                except:
                     logging.error(f"Error fetching URL {base_url}: {e.message}")
                 return
         except Exception as e:
             logging.error(f"Error fetching URL {base_url}: {e}")
             return
     logging.error(f"Maximum retries reached for URL {base_url}. Skipping.")
+
 
 
 
