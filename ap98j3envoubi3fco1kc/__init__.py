@@ -212,18 +212,16 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                 post_permalink = post_info.get('permalink', None)
                 post_created_at = post_info.get('created_utc', 0)
 
-                # Fetch comments for the post regardless of whether the post meets the criteria
                 if post_permalink:
                     tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
 
-                # Check if the post itself meets the criteria
                 if is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
                     post_content = post_info.get('selftext', '[deleted]')
                     post_author = post_info.get('author', '[unknown]')
                     post_url = f"https://reddit.com{post_permalink}"
                     post_id = post_info['name']
 
-                    if len(post_content.strip()) < min_post_length or post_content.strip().startsWith('http'):
+                    if len(post_content.strip()) < min_post_length or post_content.strip().startswith('http'):
                         logging.info(f"Skipping invalid post: {post_id} with content '{post_content}'")
                         continue
 
@@ -240,7 +238,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         logging.info(f"New valid post found: {item}")
                         yield item
 
-            # Await all comment fetching tasks
             for task in asyncio.as_completed(tasks):
                 async for comment in task:
                     yield comment
@@ -257,7 +254,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
         yield None
-
 
 
 
@@ -349,3 +345,4 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         await session.close()
         logging.info("Session closed.")
         logging.info("End of iterator - StopAsyncIteration")
+
