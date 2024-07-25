@@ -296,6 +296,7 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
         except Exception as e:
             logging.error(f"Error inside limited_fetch: {e}")
 
+
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
@@ -311,33 +312,31 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     collector = CommentCollector(maximum_items_to_collect)
     current_time = datetime.now(timezone.utc).timestamp()
 
-    session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit_per_host=MAX_CONCURRENT_TASKS))
-    try:
-        async for url_response in fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector):
-            if not url_response or 'urls' not in url_response:
-                logging.error("Failed to get subreddit URLs from proxy")
-                return
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit_per_host=MAX_CONCURRENT_TASKS)) as session:
+        try:
+            async for url_response in fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector):
+                if not url_response or 'urls' not in url_response:
+                    logging.error("Failed to get subreddit URLs from proxy")
+                    return
 
-            subreddit_urls = url_response['urls']
+                subreddit_urls = url_response['urls']
 
-            semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-            tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) for subreddit_url in subreddit_urls]
+                semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+                tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) for subreddit_url in subreddit_urls]
 
-            for task in asyncio.as_completed(tasks):
-                async for item in task:
+                for task in asyncio.as_completed(tasks):
+                    async for item in task:
+                        yield item
+
+                for index, item in enumerate(collector.items, start=1):
+                    item = post_process_item(item)
+                    logging.info(f"Found comment {index}: {item}")
                     yield item
-
-            for index, item in enumerate(collector.items, start=1):
-                item = post_process_item(item)
-                logging.info(f"Found comment {index}: {item}")
-                yield item
-    except GeneratorExit:
-        logging.info("GeneratorExit received in query, exiting gracefully.")
-        raise
-    except Exception as e:
-        logging.error(f"Error in query: {e}")
-    finally:
-        logging.info("Cleaning up: closing session.")
-        await session.close()
-        logging.info("Session closed.")
-        logging.info("End of iterator - StopAsyncIteration")
+        except GeneratorExit:
+            logging.info("GeneratorExit received in query, exiting gracefully.")
+            raise
+        except Exception as e:
+            logging.error(f"Error in query: {e}")
+        finally:
+            logging.info("Session closed.")
+            logging.info("End of iterator - StopAsyncIteration")
