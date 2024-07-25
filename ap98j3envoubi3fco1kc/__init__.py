@@ -193,7 +193,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                     logging.info(f"Skipping non-post item: {post_kind}")
                     continue
 
-                post_permalink = post_info.get('permalink')
+                post_permalink = post_info.get('permalink', None)
                 post_created_at = post_info.get('created_utc', 0)
 
                 if is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
@@ -220,16 +220,17 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         logging.info(f"New valid post found: {item}")
                         yield item
 
-            # Fetch comments for all posts, regardless of age
-            async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
-                try:
-                    if len(comment.content) >= min_post_length:
-                        yield comment
-                    else:
-                        logging.info(f"Skipping short comment in post comments: {comment.url}")
-                except GeneratorExit:
-                    logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
-                    raise
+                # Fetch comments for all posts, regardless of age
+                if post_permalink:
+                    async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
+                        try:
+                            if len(comment.content) >= min_post_length:
+                                yield comment
+                            else:
+                                logging.info(f"Skipping short comment in post comments: {comment.url}")
+                        except GeneratorExit:
+                            logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
+                            raise
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         raise
