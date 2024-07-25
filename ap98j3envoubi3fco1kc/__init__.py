@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 
 MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-MAX_CONCURRENT_TASKS = 200
+MAX_CONCURRENT_TASKS = 500
 MAX_RETRIES_PROXY = 3  # Maximum number of retries for 503 errors
 
 load()  # Load the wordsegment library data
@@ -176,7 +176,6 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
     try:
-        # Construct the URL with limit and after parameters
         params = {
             'limit': limit,
             'raw_json': 1
@@ -195,6 +194,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                 return
 
             posts = response_json['data']['children']
+            tasks = []
             for post in posts:
                 if collector.should_stop_fetching():
                     logging.info("Stopping fetch_posts due to max items collected")
@@ -214,7 +214,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                     post_content = post_info.get('selftext', '[deleted]')
                     post_author = post_info.get('author', '[unknown]')
                     post_url = f"https://reddit.com{post_permalink}"
-                    post_id = post_info['name']  # Extracting the post ID
+                    post_id = post_info['name']
 
                     if len(post_content.strip()) < min_post_length or post_content.strip().startswith('http'):
                         logging.info(f"Skipping invalid post: {post_id} with content '{post_content}'")
@@ -222,7 +222,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
                     item = Item(
                         title=Title(post_info.get('title', '[deleted]')),
-                        content=Content(post_content),  # Ensure content is always added
+                        content=Content(post_content),
                         author=Author(hashlib.sha1(bytes(post_author, encoding="utf-8")).hexdigest()),
                         created_at=CreatedAt(format_timestamp(post_created_at)),
                         domain=Domain("reddit.com"),
@@ -233,20 +233,19 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         logging.info(f"New valid post found: {item}")
                         yield item
 
-                if post_permalink:
-                    async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
-                        try:
-                            if len(comment.content) >= min_post_length:
-                                yield comment
-                            else:
-                                logging.info(f"Skipping short comment in post comments: {comment.url}")
-                        except GeneratorExit:
-                            logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
-                            raise
+                    if post_permalink:
+                        tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
 
-            # Log the page and yield the value of 'after' to be used in the next request
+            if tasks:
+                for task in asyncio.as_completed(tasks):
+                    async for comment in task:
+                        yield comment
+
             new_after = response_json['data'].get('after')
-            logging.info(f"Fetched page with after={new_after}")
+            if new_after:
+                logging.info(f"Fetched page with after={new_after}")
+            else:
+                logging.info("Fetched page but no after parameter found, this might be the last page")
             yield new_after
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
@@ -254,9 +253,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
         yield None
-
-
-
 
 
 
