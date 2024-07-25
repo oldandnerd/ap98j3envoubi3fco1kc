@@ -166,7 +166,12 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100) -> AsyncGenerator[Item, None]:
     try:
-        subreddit_url_with_limit = f"{subreddit_url.rstrip('/')}/.json?limit={limit}"
+        # Ensure the URL is correctly constructed with the limit parameter
+        if not subreddit_url.endswith('.json'):
+            subreddit_url_with_limit = f"{subreddit_url.rstrip('/')}/.json?limit={limit}"
+        else:
+            subreddit_url_with_limit = f"{subreddit_url}?limit={limit}"
+
         async for response_json in fetch_with_proxy(session, subreddit_url_with_limit, collector):
             if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
                 logging.info("No posts found or invalid response in fetch_posts")
@@ -200,7 +205,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
                     item = Item(
                         title=Title(post_info.get('title', '[deleted]')),
-                        content=Content(post_content),
+                        content=Content(post_content),  # Ensure content is always added
                         author=Author(hashlib.sha1(bytes(post_author, encoding="utf-8")).hexdigest()),
                         created_at=CreatedAt(format_timestamp(post_created_at)),
                         domain=Domain("reddit.com"),
@@ -244,7 +249,7 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
     async with semaphore:
         for attempt in range(1):
             try:
-                async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json', collector, max_oldness_seconds, min_post_length, current_time, post_limit):
+                async for item in fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, post_limit):
                     try:
                         yield item
                     except GeneratorExit:
@@ -264,7 +269,7 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             current_failed = []
             for subreddit_url in failed_subreddits:
                 try:
-                    async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json', collector, max_oldness_seconds, min_post_length, current_time, post_limit):
+                    async for item in fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, post_limit):
                         try:
                             yield item
                         except GeneratorExit:
@@ -277,6 +282,7 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
                     logging.error(f"Error inside retry loop in limited_fetch: {e}")
                     current_failed.append(subreddit_url)
             failed_subreddits = current_failed
+
 
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
