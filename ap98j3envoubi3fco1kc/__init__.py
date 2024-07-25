@@ -321,7 +321,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
     session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit_per_host=MAX_CONCURRENT_TASKS))
     try:
-        async for url_response in fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector):
+        async for url_response in fetch_with_proxy(session, f'{MANAGER_IP}/get_urls', collector, params={'batch_size': batch_size}):
             if not url_response or 'urls' not in url_response:
                 logging.error("Failed to get subreddit URLs from proxy")
                 return
