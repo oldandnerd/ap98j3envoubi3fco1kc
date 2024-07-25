@@ -4,7 +4,7 @@ import hashlib
 import logging
 import re
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Dict
+from typing import AsyncGenerator, Dict, List
 from wordsegment import load, segment
 from exorde_data import Item, Content, Title, Author, CreatedAt, Url, Domain
 from aiohttp import ClientConnectorError
@@ -251,8 +251,9 @@ def is_valid_item(content, url, min_post_length):
         return False
     return True
 
-async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) -> AsyncGenerator[Item, None]:
+async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) -> List[Item]:
     async with semaphore:
+        items = []
         try:
             after = None
             items_fetched = 0
@@ -267,7 +268,7 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
                     elif result is None:
                         break
                     else:
-                        yield result
+                        items.append(result)
                         items_fetched += 1
                 if not after or after == last_after:
                     logging.info(f"No more pages to fetch for subreddit {subreddit_url} or after parameter did not change.")
@@ -278,6 +279,7 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             raise
         except Exception as e:
             logging.error(f"Error inside limited_fetch: {e}")
+        return items
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
@@ -306,14 +308,13 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
             tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) for subreddit_url in subreddit_urls]
 
-            for task in tasks:
-                async for item in task:
-                    yield item
+            all_items = await asyncio.gather(*tasks)
 
-            for index, item in enumerate(collector.items, start=1):
-                item = post_process_item(item)
-                logging.info(f"Found comment {index}: {item}")
-                yield item
+            for items in all_items:
+                for item in items:
+                    item = post_process_item(item)
+                    logging.info(f"Found item: {item}")
+                    yield item
     except GeneratorExit:
         logging.info("GeneratorExit received in query, exiting gracefully.")
         raise
