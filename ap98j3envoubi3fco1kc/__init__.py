@@ -176,6 +176,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
     try:
+        # Construct the URL with limit and after parameters
         params = {
             'limit': limit,
             'raw_json': 1
@@ -236,9 +237,10 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                     if post_permalink:
                         tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
 
+            # Concurrently fetch comments for all posts
             if tasks:
                 for task in asyncio.as_completed(tasks):
-                    async for comment in task:
+                    async for comment in await task:
                         yield comment
 
             new_after = response_json['data'].get('after')
@@ -253,6 +255,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
         yield None
+
 
 
 
@@ -294,6 +297,7 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             raise
         except Exception as e:
             logging.error(f"Error inside limited_fetch: {e}")
+
 
 
 
