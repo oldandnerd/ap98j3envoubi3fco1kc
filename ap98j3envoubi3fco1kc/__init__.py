@@ -311,7 +311,9 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
         tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) for subreddit_url in subreddit_urls]
 
-        for task in asyncio.as_completed(tasks):
+        await asyncio.gather(*tasks)
+
+        for task in tasks:
             async for item in task:
                 yield item
 
