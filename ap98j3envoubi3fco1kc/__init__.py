@@ -284,8 +284,8 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
     min_post_length = parameters.get('min_post_length')
-    batch_size = parameters.get('batch_size', 100)
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 100)
+    batch_size = parameters.get('batch_size', 20)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 7)
 
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
                  f"maximum_items_to_collect={maximum_items_to_collect}, min_post_length={min_post_length}, "
@@ -318,6 +318,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
                 item = post_process_item(item)
                 logging.info(f"Found comment {index}: {item}")
+                print(item)  # Print the item content
                 yield item
     except GeneratorExit:
         logging.info("GeneratorExit received in query, exiting gracefully.")
