@@ -184,12 +184,17 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         if after:
             params['after'] = after
 
+        # Correctly format the subreddit URL to ensure query parameters are added correctly
         if not subreddit_url.endswith('.json'):
             subreddit_url_with_limit = f"{subreddit_url.rstrip('/')}/.json"
         else:
             subreddit_url_with_limit = subreddit_url
 
-        async for response_json in fetch_with_proxy(session, subreddit_url_with_limit, collector, params=params):
+        # Adding the query parameters to the URL
+        query_params = '&'.join([f'{key}={value}' for key, value in params.items()])
+        final_url = f"{subreddit_url_with_limit}?{query_params}"
+
+        async for response_json in fetch_with_proxy(session, final_url, collector):
             if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
                 logging.info("No posts found or invalid response in fetch_posts")
                 return
