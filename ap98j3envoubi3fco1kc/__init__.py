@@ -45,31 +45,41 @@ class CommentCollector:
     def should_stop_fetching(self):
         return self.stop_fetching
 
-async def fetch_with_proxy(session, url, collector, retries=5) -> AsyncGenerator[Dict, None]:
+async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerator[Dict, None]:
     headers = {'User-Agent': USER_AGENT}
-    for attempt in range(retries):
+    retries = 0
+    while retries < MAX_RETRIES_PROXY:
         if collector.should_stop_fetching():
             logging.info("Stopping fetch_with_proxy retries as maximum items have been collected.")
             break
         try:
-            async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers) as response:
+            async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers, params=params) as response:
                 response.raise_for_status()
                 yield await response.json()
                 return
-        except aiohttp.ClientConnectorError as e:
-            logging.error(f"Connection error fetching URL {url}: {e}")
+        except ClientConnectorError as e:
+            logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
+            logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
+            await asyncio.sleep(10)
         except aiohttp.ClientResponseError as e:
-            logging.error(f"Response error fetching URL {url}: {e}")
-        except aiohttp.ClientConnectionError as e:
-            logging.error(f"Connection error fetching URL {url}: {e}")
+            if e.status == 503:
+                logging.info("No available IPs. Retrying in 2 seconds...")
+                await asyncio.sleep(2)
+                retries += 1
+            else:
+                error_message = await response.json()
+                if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
+                    logging.error(f"Error fetching URL {url}: Subreddit is banned.")
+                elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
+                    logging.error(f"Error fetching URL {url}: Subreddit is private.")
+                else:
+                    logging.error(f"Error fetching URL {url}: {e.message}")
+                return
         except Exception as e:
-            logging.error(f"Unexpected error fetching URL {url}: {e}")
-
-        wait_time = 2 ** attempt
-        logging.info(f"Retrying in {wait_time} seconds...")
-        await asyncio.sleep(wait_time)
-
+            logging.error(f"Error fetching URL {url}: {e}")
+            return
     logging.error(f"Maximum retries reached for URL {url}. Skipping.")
+
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -250,6 +260,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
 
 
+
 def is_valid_item(item, min_post_length):
     if len(item.content) < min_post_length \
     or item.url.startswith("https://reddit.comhttps:")  \
@@ -280,7 +291,6 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             raise
         except Exception as e:
             logging.error(f"Error inside limited_fetch: {e}")
-
 
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
