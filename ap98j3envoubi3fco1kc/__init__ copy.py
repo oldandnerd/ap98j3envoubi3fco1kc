@@ -80,11 +80,19 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
             return
     logging.error(f"Maximum retries reached for URL {url}. Skipping.")
 
+
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 def is_within_timeframe_seconds(created_utc, max_oldness_seconds, current_time):
     return (current_time - created_utc) <= max_oldness_seconds
+
+def correct_reddit_url(url):
+    parts = url.split("https://reddit.comhttps://", 1)
+    if len(parts) == 2:
+        corrected_url = "https://" + parts[1]
+        return corrected_url
+    return url
 
 def extract_subreddit_name(input_string):
     match = re.search(r'r/([^/]+)', input_string)
@@ -104,9 +112,7 @@ def post_process_item(item):
     except Exception as e:
         logging.exception(f"[Reddit post_process_item] Word segmentation failed: {e}, ignoring...")
     try:
-        if item.url.startswith("https://reddit.comhttps://"):
-            parts = item.url.split("https://reddit.comhttps://", 1)
-            item.url = "https://" + parts[1]
+        item.url = Url(correct_reddit_url(item.url))
     except:
         logging.warning(f"[Reddit] failed to correct the URL of item {item.url}")
     return item
@@ -144,7 +150,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                 comment_url = f"https://reddit.com{comment_data['permalink']}"
                 comment_id = comment_data['name']
 
-                if not is_valid_item(comment_content, comment_url, min_post_length):
+                if len(comment_content.strip()) < min_post_length or comment_content.strip().startswith('http'):
                     logging.info(f"Skipping invalid comment: {comment_data['id']} with content '{comment_content}'")
                     continue
 
@@ -164,6 +170,8 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         raise
     except Exception as e:
         logging.error(f"Error in fetch_comments: {e}")
+
+
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
     try:
@@ -215,7 +223,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                     post_url = f"https://reddit.com{post_permalink}"
                     post_id = post_info['name']
 
-                    if not is_valid_item(post_content, post_url, min_post_length):
+                    if len(post_content.strip()) < min_post_length or post_content.strip().startswith('http'):
                         logging.info(f"Skipping invalid post: {post_id} with content '{post_content}'")
                         continue
 
@@ -245,11 +253,19 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         logging.error(f"Error in fetch_posts: {e}")
         yield None
 
-def is_valid_item(content, url, min_post_length):
-    if len(content.strip()) < min_post_length or content.strip().startswith('http') or \
-       content == "[deleted]" or url.startswith("https://reddit.comhttps:") or not ("reddit.com" in url):
+
+
+
+
+
+def is_valid_item(item, min_post_length):
+    if len(item.content) < min_post_length \
+    or item.url.startswith("https://reddit.comhttps:")  \
+    or not ("reddit.com" in item.url) \
+    or item.content == "[deleted]":
         return False
-    return True
+    else:
+        return True
 
 async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) -> AsyncGenerator[Item, None]:
     async with semaphore:
@@ -278,6 +294,9 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             raise
         except Exception as e:
             logging.error(f"Error inside limited_fetch: {e}")
+
+
+
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
