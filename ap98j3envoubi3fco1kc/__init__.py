@@ -150,8 +150,9 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                 comment_url = f"https://reddit.com{comment_data['permalink']}"
                 comment_id = comment_data['name']  # Extracting the comment ID
 
-                if len(comment_content) < min_post_length:
-                    logging.info(f"Skipping short comment: {comment_data['id']} with length {len(comment_content)}")
+                # Check if the content is valid (not empty and not just a URL)
+                if len(comment_content.strip()) < min_post_length or comment_content.strip().startswith('http'):
+                    logging.info(f"Skipping invalid comment: {comment_data['id']} with content '{comment_content}'")
                     continue
 
                 item = Item(
@@ -170,6 +171,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         raise
     except Exception as e:
         logging.error(f"Error in fetch_comments: {e}")
+
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
     try:
@@ -200,8 +202,9 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                     post_url = f"https://reddit.com{post_permalink}"
                     post_id = post_info['name']  # Extracting the post ID
 
-                    if len(post_content) < min_post_length:
-                        logging.info(f"Skipping short post: {post_id} with length {len(post_content)}")
+                    # Check if the content is valid (not empty and not just a URL)
+                    if len(post_content.strip()) < min_post_length or post_content.strip().startswith('http'):
+                        logging.info(f"Skipping invalid post: {post_id} with content '{post_content}'")
                         continue
 
                     item = Item(
@@ -217,21 +220,22 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         logging.info(f"New valid post found: {item}")
                         yield item
 
-                # Fetch comments for all posts, regardless of age
-                async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
-                    try:
-                        if len(comment.content) >= min_post_length:
-                            yield comment
-                        else:
-                            logging.info(f"Skipping short comment in post comments: {comment.url}")
-                    except GeneratorExit:
-                        logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
-                        raise
+            # Fetch comments for all posts, regardless of age
+            async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
+                try:
+                    if len(comment.content) >= min_post_length:
+                        yield comment
+                    else:
+                        logging.info(f"Skipping short comment in post comments: {comment.url}")
+                except GeneratorExit:
+                    logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
+                    raise
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         raise
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
+
 
 def is_valid_item(item, min_post_length):
     if len(item.content) < min_post_length \
