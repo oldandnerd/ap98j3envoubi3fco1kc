@@ -80,7 +80,6 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
             return
     logging.error(f"Maximum retries reached for URL {url}. Skipping.")
 
-
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
@@ -172,8 +171,6 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
     except Exception as e:
         logging.error(f"Error in fetch_comments: {e}")
 
-
-
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
     try:
         params = {
@@ -256,18 +253,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         logging.error(f"Error in fetch_posts: {e}")
         yield None
 
-
-
-
-def is_valid_item(item, min_post_length):
-    if len(item.content) < min_post_length \
-    or item.url.startswith("https://reddit.comhttps:")  \
-    or not ("reddit.com" in item.url) \
-    or item.content == "[deleted]":
-        return False
-    else:
-        return True
-
 async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) -> AsyncGenerator[Item, None]:
     async with semaphore:
         try:
@@ -295,7 +280,6 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             raise
         except Exception as e:
             logging.error(f"Error inside limited_fetch: {e}")
-
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
