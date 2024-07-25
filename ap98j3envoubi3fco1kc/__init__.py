@@ -173,9 +173,11 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         logging.error(f"Error in fetch_comments: {e}")
 
 
-async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
+async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100) -> AsyncGenerator[Item, None]:
     try:
-        async for response_json in fetch_with_proxy(session, subreddit_url, collector):
+        # Append the limit to the subreddit URL
+        subreddit_url_with_limit = f"{subreddit_url.rstrip('/')}/.json?limit={limit}"
+        async for response_json in fetch_with_proxy(session, subreddit_url_with_limit, collector):
             if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
                 logging.info("No posts found or invalid response in fetch_posts")
                 return
@@ -238,6 +240,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         logging.error(f"Error in fetch_posts: {e}")
 
 
+
 def is_valid_item(item, min_post_length):
     if len(item.content) < min_post_length \
     or item.url.startswith("https://reddit.comhttps:")  \
@@ -247,12 +250,12 @@ def is_valid_item(item, min_post_length):
     else:
         return True
 
-async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) -> AsyncGenerator[Item, None]:
+async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) -> AsyncGenerator[Item, None]:
     failed_subreddits = []
     async with semaphore:
         for attempt in range(1):
             try:
-                async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
+                async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json', collector, max_oldness_seconds, min_post_length, current_time, post_limit):
                     try:
                         yield item
                     except GeneratorExit:
@@ -273,7 +276,7 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             current_failed = []
             for subreddit_url in failed_subreddits:
                 try:
-                    async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json' if not subreddit_url.endswith('.json') else subreddit_url, collector, max_oldness_seconds, min_post_length, current_time):
+                    async for item in fetch_posts(session, subreddit_url.rstrip('/') + '/.json', collector, max_oldness_seconds, min_post_length, current_time, post_limit):
                         try:
                             yield item
                         except GeneratorExit:
@@ -287,16 +290,21 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
                     current_failed.append(subreddit_url)
             failed_subreddits = current_failed
 
+
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
-    maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
+    maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
     min_post_length = parameters.get('min_post_length')
     batch_size = parameters.get('batch_size', 100)
     nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 100)
+    post_limit = parameters.get('post_limit', 100)  # Limit for the number of posts per subreddit
+
+    # Enforce a maximum limit of 100
+    maximum_items_to_collect = min(maximum_items_to_collect, 100)
 
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
                  f"maximum_items_to_collect={maximum_items_to_collect}, min_post_length={min_post_length}, "
-                 f"batch_size={batch_size}, nb_subreddit_attempts={nb_subreddit_attempts}")
+                 f"batch_size={batch_size}, nb_subreddit_attempts={nb_subreddit_attempts}, post_limit={post_limit}")
 
     collector = CommentCollector(maximum_items_to_collect)
     current_time = datetime.now(timezone.utc).timestamp()
@@ -311,7 +319,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             subreddit_urls = url_response['urls']
 
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-            tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts) for subreddit_url in subreddit_urls]
+            tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) for subreddit_url in subreddit_urls]
 
             for task in tasks:
                 async for item in task:
