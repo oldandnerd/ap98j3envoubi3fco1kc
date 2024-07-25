@@ -248,6 +248,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
 
 
+
 def is_valid_item(item, min_post_length):
     if len(item.content) < min_post_length \
     or item.url.startswith("https://reddit.comhttps:")  \
@@ -263,13 +264,13 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             after = None
             items_fetched = 0
             while items_fetched < 1000 and not collector.should_stop_fetching():
-                async for item in fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, post_limit, after):
-                    if item is None:
+                async for result in fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, post_limit, after):
+                    if isinstance(result, str):
+                        after = result
+                    elif result is None:
                         break
-                    if isinstance(item, str):
-                        after = item
                     else:
-                        yield item
+                        yield result
                         items_fetched += 1
                 if not after:
                     break
