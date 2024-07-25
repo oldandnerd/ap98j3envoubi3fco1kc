@@ -234,14 +234,15 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                             logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
                             raise
 
-            # Return the value of 'after' to be used in the next request
-            return response_json['data']['after']
+            # Yield the value of 'after' to be used in the next request
+            yield response_json['data']['after']
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         raise
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
-        return None
+        yield None
+
 
 
 
@@ -262,15 +263,22 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             after = None
             items_fetched = 0
             while items_fetched < 1000 and not collector.should_stop_fetching():
-                after = await fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, post_limit, after)
+                async for item in fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, post_limit, after):
+                    if item is None:
+                        break
+                    if isinstance(item, str):
+                        after = item
+                    else:
+                        yield item
+                        items_fetched += 1
                 if not after:
                     break
-                items_fetched += 1
         except GeneratorExit:
             logging.info("GeneratorExit received inside limited_fetch, exiting gracefully.")
             raise
         except Exception as e:
             logging.error(f"Error inside limited_fetch: {e}")
+
 
 
 
@@ -303,11 +311,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
             for task in tasks:
                 async for item in task:
-                    try:
-                        yield item
-                    except GeneratorExit:
-                        logging.info("GeneratorExit received in limited_fetch within query, exiting gracefully.")
-                        raise
+                    yield item
 
             for index, item in enumerate(collector.items, start=1):
                 item = post_process_item(item)
