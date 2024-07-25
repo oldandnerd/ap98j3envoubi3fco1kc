@@ -179,7 +179,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         else:
             subreddit_url_with_limit = subreddit_url
 
-        async for response_json in fetch_with_proxy(session, subreddit_url_with_limit, collector, params):
+        async for response_json in fetch_with_proxy(session, subreddit_url_with_limit, collector, params=params):
             if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
                 logging.info("No posts found or invalid response in fetch_posts")
                 return
@@ -249,6 +249,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
 
 
+
 def is_valid_item(item, min_post_length):
     if len(item.content) < min_post_length \
     or item.url.startswith("https://reddit.comhttps:")  \
@@ -279,7 +280,6 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             raise
         except Exception as e:
             logging.error(f"Error inside limited_fetch: {e}")
-
 
 
 
