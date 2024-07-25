@@ -318,7 +318,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
                 created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
                 item = post_process_item(item)
                 logging.info(f"Found comment {index}: {item}")
-                print(item)  # Print the item content
+                print("WOWWWWWWWWWWWWWW", item)  # Print the item content
                 yield item
     except GeneratorExit:
         logging.info("GeneratorExit received in query, exiting gracefully.")
