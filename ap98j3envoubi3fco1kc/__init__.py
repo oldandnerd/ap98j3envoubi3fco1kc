@@ -245,8 +245,9 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                             raise
 
             # Log the page and yield the value of 'after' to be used in the next request
-            logging.info(f"Fetched page with after={after}")
-            yield response_json['data']['after']
+            new_after = response_json['data'].get('after')
+            logging.info(f"Fetched page with after={new_after}")
+            yield new_after
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         raise
@@ -277,18 +278,20 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             after = None
             items_fetched = 0
             page_number = 1
+            last_after = None
             while items_fetched < 1000 and not collector.should_stop_fetching():
-                logging.info(f"Fetching page {page_number} for subreddit {subreddit_url}")
+                logging.info(f"Fetching page {page_number} for subreddit {subreddit_url} with after={after}")
                 async for result in fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, post_limit, after):
                     if isinstance(result, str):
+                        last_after = after
                         after = result
                     elif result is None:
                         break
                     else:
                         yield result
                         items_fetched += 1
-                if not after:
-                    logging.info(f"No more pages to fetch for subreddit {subreddit_url}")
+                if not after or after == last_after:
+                    logging.info(f"No more pages to fetch for subreddit {subreddit_url} or after parameter did not change.")
                     break
                 page_number += 1
         except GeneratorExit:
