@@ -164,15 +164,17 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         logging.error(f"Error in fetch_comments: {e}")
 
 
-async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100) -> AsyncGenerator[Item, None]:
+async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
     try:
-        # Ensure the URL is correctly constructed with the limit parameter
-        if not subreddit_url.endswith('.json'):
-            subreddit_url_with_limit = f"{subreddit_url.rstrip('/')}/.json?limit={limit}"
-        else:
-            subreddit_url_with_limit = f"{subreddit_url}?limit={limit}"
+        # Construct the URL with limit and after parameters
+        params = {
+            'limit': limit,
+            'raw_json': 1
+        }
+        if after:
+            params['after'] = after
 
-        async for response_json in fetch_with_proxy(session, subreddit_url_with_limit, collector):
+        async for response_json in fetch_with_proxy(session, subreddit_url, collector, params):
             if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
                 logging.info("No posts found or invalid response in fetch_posts")
                 return
@@ -226,11 +228,15 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         except GeneratorExit:
                             logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
                             raise
+
+            # Return the value of 'after' to be used in the next request
+            return response_json['data']['after']
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         raise
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
+        return None
 
 
 
