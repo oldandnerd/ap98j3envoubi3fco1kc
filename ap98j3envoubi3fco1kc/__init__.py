@@ -114,6 +114,7 @@ def post_process_item(item):
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
     try:
         comments_url = f"https://www.reddit.com{post_permalink}.json"
+        stopping_logged = False
         async for comments_json in fetch_with_proxy(session, comments_url, collector):
             if not comments_json or len(comments_json) <= 1:
                 logging.info("No comments found or invalid response in fetch_comments")
@@ -122,7 +123,9 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
             comments = comments_json[1]['data']['children']
             for comment in comments:
                 if collector.should_stop_fetching():
-                    logging.info("Stopping fetch_comments due to max items collected")
+                    if not stopping_logged:
+                        logging.info("Stopping fetch_comments due to max items collected")
+                        stopping_logged = True
                     return
 
                 if comment['kind'] != 't1':
@@ -182,6 +185,8 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         query_params = '&'.join([f'{key}={value}' for key, value in params.items()])
         final_url = f"{subreddit_url_with_limit}?{query_params}"
 
+        stopping_logged = False
+
         async for response_json in fetch_with_proxy(session, final_url, collector):
             if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
                 logging.info("No posts found or invalid response in fetch_posts")
@@ -190,7 +195,9 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
             posts = response_json['data']['children']
             for post in posts:
                 if collector.should_stop_fetching():
-                    logging.info("Stopping fetch_posts due to max items collected")
+                    if not stopping_logged:
+                        logging.info("Stopping fetch_posts due to max items collected")
+                        stopping_logged = True
                     return
 
                 post_kind = post.get('kind')
