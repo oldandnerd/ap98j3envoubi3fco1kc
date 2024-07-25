@@ -204,6 +204,10 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                     post_url = f"https://reddit.com{post_permalink}"
                     post_id = post_info['name']  # Extracting the post ID
 
+                    if len(post_content) < min_post_length:
+                        logging.info(f"Skipping short post: {post_id} with length {len(post_content)}")
+                        continue
+
                     item = Item(
                         title=Title(post_info.get('title', '[deleted]')),
                         content=Content(post_content),  # Ensure content is always added
@@ -213,15 +217,17 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         url=Url(post_url),
                     )
 
-                    if is_valid_item(item, min_post_length) and await collector.add_item(item, post_id):
+                    if await collector.add_item(item, post_id):
                         logging.info(f"New valid post found: {item}")
                         yield item
 
                 # Fetch comments for all posts, regardless of age
                 async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
                     try:
-                        if is_valid_item(comment, min_post_length):
+                        if len(comment.content) >= min_post_length:
                             yield comment
+                        else:
+                            logging.info(f"Skipping short comment in post comments: {comment.url}")
                     except GeneratorExit:
                         logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
                         raise
@@ -284,8 +290,8 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 1000)
     min_post_length = parameters.get('min_post_length')
-    batch_size = parameters.get('batch_size', 20)
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 7)
+    batch_size = parameters.get('batch_size', 100)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 100)
 
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
                  f"maximum_items_to_collect={maximum_items_to_collect}, min_post_length={min_post_length}, "
@@ -317,8 +323,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             for index, item in enumerate(collector.items, start=1):
                 created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
                 item = post_process_item(item)
-                logging.info(f"Found item {index}: {item}")
-                logging.info(f"Total items collected: {collector.total_items_collected}")
+                logging.info(f"Found comment {index}: {item}")
                 yield item
     except GeneratorExit:
         logging.info("GeneratorExit received in query, exiting gracefully.")
