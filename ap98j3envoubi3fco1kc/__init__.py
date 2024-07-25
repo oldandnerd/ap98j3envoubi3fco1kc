@@ -174,10 +174,8 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         logging.error(f"Error in fetch_comments: {e}")
 
 
-
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
     try:
-        # Construct the URL with limit and after parameters
         params = {
             'limit': limit,
             'raw_json': 1
@@ -196,7 +194,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                 return
 
             posts = response_json['data']['children']
-            tasks = []
             for post in posts:
                 if collector.should_stop_fetching():
                     logging.info("Stopping fetch_posts due to max items collected")
@@ -236,13 +233,8 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                         yield item
 
                     if post_permalink:
-                        tasks.append(fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time))
-
-            # Concurrently fetch comments for all posts
-            if tasks:
-                for task in asyncio.as_completed(tasks):
-                    async for comment in await task:
-                        yield comment
+                        async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
+                            yield comment
 
             new_after = response_json['data'].get('after')
             if new_after:
