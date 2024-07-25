@@ -244,7 +244,8 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                             logging.info("GeneratorExit received in fetch_comments within fetch_posts, exiting gracefully.")
                             raise
 
-            # Yield the value of 'after' to be used in the next request
+            # Log the page and yield the value of 'after' to be used in the next request
+            logging.info(f"Fetched page with after={after}")
             yield response_json['data']['after']
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
@@ -275,7 +276,9 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
         try:
             after = None
             items_fetched = 0
+            page_number = 1
             while items_fetched < 1000 and not collector.should_stop_fetching():
+                logging.info(f"Fetching page {page_number} for subreddit {subreddit_url}")
                 async for result in fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, post_limit, after):
                     if isinstance(result, str):
                         after = result
@@ -285,7 +288,9 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
                         yield result
                         items_fetched += 1
                 if not after:
+                    logging.info(f"No more pages to fetch for subreddit {subreddit_url}")
                     break
+                page_number += 1
         except GeneratorExit:
             logging.info("GeneratorExit received inside limited_fetch, exiting gracefully.")
             raise
