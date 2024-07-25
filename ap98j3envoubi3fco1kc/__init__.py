@@ -317,8 +317,8 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
             for index, item in enumerate(collector.items, start=1):
                 created_at_timestamp = datetime.strptime(item.created_at, '%Y-%m-%dT%H:%M:%SZ').timestamp()
                 item = post_process_item(item)
-                logging.info(f"Found comment {index}: {item}")
-                print("WOWWWWWWWWWWWWWW", item)  # Print the item content
+                logging.info(f"Found item {index}: {item}")
+                logging.info(f"Total items collected: {collector.total_items_collected}")
                 yield item
     except GeneratorExit:
         logging.info("GeneratorExit received in query, exiting gracefully.")
