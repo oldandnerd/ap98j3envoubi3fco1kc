@@ -54,8 +54,11 @@ async def fetch_with_proxy(session, base_url, collector, params=None) -> AsyncGe
             break
         try:
             # Construct the query string properly
-            query_string = "?" + "&".join([f"{key}={value}" for key, value in params.items()])
-            full_url = f"{base_url}{query_string}"
+            if params:
+                query_string = "?" + "&".join([f"{key}={value}" for key, value in params.items()])
+                full_url = f"{base_url}{query_string}"
+            else:
+                full_url = base_url
             
             async with session.get(f'{MANAGER_IP}/proxy', headers=headers, params={'url': full_url}) as response:
                 response.raise_for_status()
@@ -90,6 +93,7 @@ async def fetch_with_proxy(session, base_url, collector, params=None) -> AsyncGe
             logging.error(f"Error fetching URL {full_url}: {e}")
             return
     logging.error(f"Maximum retries reached for URL {full_url}. Skipping.")
+
 
 
 
@@ -328,7 +332,10 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
     session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit_per_host=MAX_CONCURRENT_TASKS))
     try:
-        async for url_response in fetch_with_proxy(session, f'{MANAGER_IP}/get_urls', collector, params={'batch_size': batch_size}):
+        # Construct the query string properly
+        get_urls_url = f"{MANAGER_IP}/get_urls?batch_size={batch_size}"
+        
+        async for url_response in fetch_with_proxy(session, get_urls_url, collector):
             if not url_response or 'urls' not in url_response:
                 logging.error("Failed to get subreddit URLs from proxy")
                 return
