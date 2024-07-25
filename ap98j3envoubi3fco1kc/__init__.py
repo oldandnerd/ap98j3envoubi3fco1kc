@@ -53,16 +53,20 @@ async def fetch_with_proxy(session, base_url, collector, params=None) -> AsyncGe
             logging.info("Stopping fetch_with_proxy retries as maximum items have been collected.")
             break
         try:
-            async with session.get(f'{MANAGER_IP}/proxy', headers=headers, params={'url': base_url, **params}) as response:
+            # Construct the query string properly
+            query_string = "?" + "&".join([f"{key}={value}" for key, value in params.items()])
+            full_url = f"{base_url}{query_string}"
+            
+            async with session.get(f'{MANAGER_IP}/proxy', headers=headers, params={'url': full_url}) as response:
                 response.raise_for_status()
                 json_response = await response.json()
                 if json_response is None:
-                    logging.error(f"No valid response received for URL {base_url}")
+                    logging.error(f"No valid response received for URL {full_url}")
                     return
                 yield json_response
                 return
         except ClientConnectorError as e:
-            logging.error(f"Error fetching URL {base_url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
+            logging.error(f"Error fetching URL {full_url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
             logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
             await asyncio.sleep(10)
         except aiohttp.ClientResponseError as e:
@@ -74,19 +78,18 @@ async def fetch_with_proxy(session, base_url, collector, params=None) -> AsyncGe
                 try:
                     error_message = await response.json()
                     if e.status == 404 and 'reason' in error_message and error_message['reason'] == 'banned':
-                        logging.error(f"Error fetching URL {base_url}: Subreddit is banned.")
+                        logging.error(f"Error fetching URL {full_url}: Subreddit is banned.")
                     elif e.status == 403 and 'reason' in error_message and error_message['reason'] == 'private':
-                        logging.error(f"Error fetching URL {base_url}: Subreddit is private.")
+                        logging.error(f"Error fetching URL {full_url}: Subreddit is private.")
                     else:
-                        logging.error(f"Error fetching URL {base_url}: {e.message}")
+                        logging.error(f"Error fetching URL {full_url}: {e.message}")
                 except:
-                    logging.error(f"Error fetching URL {base_url}: {e.message}")
+                    logging.error(f"Error fetching URL {full_url}: {e.message}")
                 return
         except Exception as e:
-            logging.error(f"Error fetching URL {base_url}: {e}")
+            logging.error(f"Error fetching URL {full_url}: {e}")
             return
-    logging.error(f"Maximum retries reached for URL {base_url}. Skipping.")
-
+    logging.error(f"Maximum retries reached for URL {full_url}. Skipping.")
 
 
 
@@ -193,13 +196,17 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         if after:
             params['after'] = after
 
-        # Correct URL construction
+        # Ensure URL ends with .json
         if not subreddit_url.endswith('.json'):
             subreddit_url_with_limit = f"{subreddit_url.rstrip('/')}/.json"
         else:
             subreddit_url_with_limit = subreddit_url
 
-        async for response_json in fetch_with_proxy(session, subreddit_url_with_limit, collector, params=params):
+        # Construct the query string properly
+        query_string = "?" + "&".join([f"{key}={value}" for key, value in params.items()])
+        full_url = f"{subreddit_url_with_limit}{query_string}"
+
+        async for response_json in fetch_with_proxy(session, full_url, collector):
             if response_json is None or 'data' not in response_json or 'children' not in response_json['data']:
                 logging.info("No posts found or invalid response in fetch_posts")
                 return
@@ -259,7 +266,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
         yield None
-
 
 
 
