@@ -193,6 +193,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         if after:
             params['after'] = after
 
+        # Correct URL construction
         if not subreddit_url.endswith('.json'):
             subreddit_url_with_limit = f"{subreddit_url.rstrip('/')}/.json"
         else:
