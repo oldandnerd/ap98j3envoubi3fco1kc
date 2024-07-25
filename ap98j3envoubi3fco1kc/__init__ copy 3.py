@@ -117,7 +117,6 @@ def post_process_item(item):
     return item
 
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
-    stopping_logged = False
     try:
         comments_url = f"https://www.reddit.com{post_permalink}.json"
         async for comments_json in fetch_with_proxy(session, comments_url, collector):
@@ -128,9 +127,6 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
             comments = comments_json[1]['data']['children']
             for comment in comments:
                 if collector.should_stop_fetching():
-                    if not stopping_logged:
-                        logging.info("Stopping fetch_comments due to max items collected")
-                        stopping_logged = True
                     return
 
                 if comment['kind'] != 't1':
@@ -174,7 +170,6 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
         logging.error(f"Error in fetch_comments: {e}")
 
 async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
-    stopping_logged = False
     try:
         params = {
             'limit': limit,
@@ -190,6 +185,8 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
         query_params = '&'.join([f'{key}={value}' for key, value in params.items()])
         final_url = f"{subreddit_url_with_limit}?{query_params}"
+
+        stopping_logged = False
 
         async for response_json in fetch_with_proxy(session, final_url, collector):
             if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
@@ -256,6 +253,7 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         logging.error(f"Error in fetch_posts: {e}")
         yield None
 
+
 def is_valid_item(content, url, min_post_length):
     if len(content.strip()) < min_post_length or content.strip().startswith('http') or \
        content == "[deleted]" or url.startswith("https://reddit.comhttps:") or not ("reddit.com" in url):
@@ -296,8 +294,8 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
     min_post_length = parameters.get('min_post_length')
-    batch_size = parameters.get('batch_size', 15)
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 15)
+    batch_size = parameters.get('batch_size', 20)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 20)
     post_limit = parameters.get('post_limit', 100)  # Limit for the number of posts per subreddit
 
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
