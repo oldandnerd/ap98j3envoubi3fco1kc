@@ -45,7 +45,7 @@ class CommentCollector:
     def should_stop_fetching(self):
         return self.stop_fetching
 
-async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerator[Dict, None]:
+async def fetch_with_proxy(session, url, collector, params=None) -> Dict:
     headers = {'User-Agent': USER_AGENT}
     retries = 0
     while retries < MAX_RETRIES_PROXY:
@@ -55,8 +55,7 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
         try:
             async with session.get(f'{MANAGER_IP}/proxy?url={url}', headers=headers, params=params) as response:
                 response.raise_for_status()
-                yield await response.json()
-                return
+                return await response.json()
         except ClientConnectorError as e:
             logging.error(f"Error fetching URL {url}: Cannot connect to host {MANAGER_IP} ssl:default [{e}]")
             logging.info("Proxy servers are offline at the moment. Retrying in 10 seconds...")
@@ -79,7 +78,6 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
             logging.error(f"Error fetching URL {url}: {e}")
             return
     logging.error(f"Maximum retries reached for URL {url}. Skipping.")
-
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -120,60 +118,58 @@ def post_process_item(item):
 async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
     try:
         comments_url = f"https://www.reddit.com{post_permalink}.json"
-        async for comments_json in fetch_with_proxy(session, comments_url, collector):
-            if not comments_json or len(comments_json) <= 1:
-                logging.info("No comments found or invalid response in fetch_comments")
+        comments_json = await fetch_with_proxy(session, comments_url, collector)
+        if not comments_json or len(comments_json) <= 1:
+            logging.info("No comments found or invalid response in fetch_comments")
+            return
+
+        comments = comments_json[1]['data']['children']
+        for comment in comments:
+            if collector.should_stop_fetching():
+                logging.info("Stopping fetch_comments due to max items collected")
                 return
 
-            comments = comments_json[1]['data']['children']
-            for comment in comments:
-                if collector.should_stop_fetching():
-                    logging.info("Stopping fetch_comments due to max items collected")
-                    return
+            if comment['kind'] != 't1':
+                logging.info(f"Skipping non-comment item: {comment['kind']}")
+                continue
 
-                if comment['kind'] != 't1':
-                    logging.info(f"Skipping non-comment item: {comment['kind']}")
-                    continue
+            comment_data = comment['data']
+            comment_created_at = comment_data['created_utc']
 
-                comment_data = comment['data']
-                comment_created_at = comment_data['created_utc']
+            if comment_data.get('author') == 'AutoModerator':
+                logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
+                continue
 
-                if comment_data.get('author') == 'AutoModerator':
-                    logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
-                    continue
+            if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
+                continue
 
-                if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
-                    continue
+            comment_content = comment_data.get('body', '[deleted]')
+            comment_author = comment_data.get('author', '[unknown]')
+            comment_url = f"https://reddit.com{comment_data['permalink']}"
+            comment_id = comment_data['name']
 
-                comment_content = comment_data.get('body', '[deleted]')
-                comment_author = comment_data.get('author', '[unknown]')
-                comment_url = f"https://reddit.com{comment_data['permalink']}"
-                comment_id = comment_data['name']
+            if len(comment_content.strip()) < min_post_length or comment_content.strip().startswith('http'):
+                logging.info(f"Skipping invalid comment: {comment_data['id']} with content '{comment_content}'")
+                continue
 
-                if len(comment_content.strip()) < min_post_length or comment_content.strip().startswith('http'):
-                    logging.info(f"Skipping invalid comment: {comment_data['id']} with content '{comment_content}'")
-                    continue
+            item = Item(
+                content=Content(comment_content),
+                author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
+                created_at=CreatedAt(format_timestamp(comment_created_at)),
+                domain=Domain("reddit.com"),
+                url=Url(comment_url),
+            )
 
-                item = Item(
-                    content=Content(comment_content),
-                    author=Author(hashlib.sha1(bytes(comment_author, encoding="utf-8")).hexdigest()),
-                    created_at=CreatedAt(format_timestamp(comment_created_at)),
-                    domain=Domain("reddit.com"),
-                    url=Url(comment_url),
-                )
-
-                if await collector.add_item(item, comment_id):
-                    logging.info(f"New valid comment found: {item}")
-                    yield item
+            if await collector.add_item(item, comment_id):
+                logging.info(f"New valid comment found: {item}")
+                yield item
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_comments, exiting gracefully.")
         raise
     except Exception as e:
         logging.error(f"Error in fetch_comments: {e}")
 
-
-
-async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
+async def fetch_posts_and_comments(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
     try:
         params = {
             'limit': limit,
@@ -190,73 +186,66 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         query_params = '&'.join([f'{key}={value}' for key, value in params.items()])
         final_url = f"{subreddit_url_with_limit}?{query_params}"
 
-        async for response_json in fetch_with_proxy(session, final_url, collector):
-            if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
-                logging.info("No posts found or invalid response in fetch_posts")
+        response_json = await fetch_with_proxy(session, final_url, collector)
+        if not response_json or 'data' not in response_json or 'children' not in response_json['data']:
+            logging.info("No posts found or invalid response in fetch_posts")
+            return
+
+        posts = response_json['data']['children']
+        for post in posts:
+            if collector.should_stop_fetching():
+                logging.info("Stopping fetch_posts due to max items collected")
                 return
 
-            posts = response_json['data']['children']
-            for post in posts:
-                if collector.should_stop_fetching():
-                    logging.info("Stopping fetch_posts due to max items collected")
-                    return
+            post_kind = post.get('kind')
+            post_info = post.get('data', {})
 
-                post_kind = post.get('kind')
-                post_info = post.get('data', {})
+            if post_kind != 't3':
+                logging.info(f"Skipping non-post item: {post_kind}")
+                continue
 
-                if post_kind != 't3':
-                    logging.info(f"Skipping non-post item: {post_kind}")
+            post_permalink = post_info.get('permalink', None)
+            post_created_at = post_info.get('created_utc', 0)
+
+            if post_permalink:
+                async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
+                    yield comment
+
+            if is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
+                post_content = post_info.get('selftext', '[deleted]')
+                post_author = post_info.get('author', '[unknown]')
+                post_url = f"https://reddit.com{post_permalink}"
+                post_id = post_info['name']
+
+                if len(post_content.strip()) < min_post_length or post_content.strip().startswith('http'):
+                    logging.info(f"Skipping invalid post: {post_id} with content '{post_content}'")
                     continue
 
-                post_permalink = post_info.get('permalink', None)
-                post_created_at = post_info.get('created_utc', 0)
+                item = Item(
+                    title=Title(post_info.get('title', '[deleted]')),
+                    content=Content(post_content),
+                    author=Author(hashlib.sha1(bytes(post_author, encoding="utf-8")).hexdigest()),
+                    created_at=CreatedAt(format_timestamp(post_created_at)),
+                    domain=Domain("reddit.com"),
+                    url=Url(post_url),
+                )
 
-                # Fetch comments for the post regardless of whether the post meets the criteria
-                if post_permalink:
-                    async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
-                        yield comment
+                if await collector.add_item(item, post_id):
+                    logging.info(f"New valid post found: {item}")
+                    yield item
 
-                # Check if the post itself meets the criteria
-                if is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
-                    post_content = post_info.get('selftext', '[deleted]')
-                    post_author = post_info.get('author', '[unknown]')
-                    post_url = f"https://reddit.com{post_permalink}"
-                    post_id = post_info['name']
-
-                    if len(post_content.strip()) < min_post_length or post_content.strip().startswith('http'):
-                        logging.info(f"Skipping invalid post: {post_id} with content '{post_content}'")
-                        continue
-
-                    item = Item(
-                        title=Title(post_info.get('title', '[deleted]')),
-                        content=Content(post_content),
-                        author=Author(hashlib.sha1(bytes(post_author, encoding="utf-8")).hexdigest()),
-                        created_at=CreatedAt(format_timestamp(post_created_at)),
-                        domain=Domain("reddit.com"),
-                        url=Url(post_url),
-                    )
-
-                    if await collector.add_item(item, post_id):
-                        logging.info(f"New valid post found: {item}")
-                        yield item
-
-            new_after = response_json['data'].get('after')
-            if new_after:
-                logging.info(f"Fetched page with after={new_after}")
-            else:
-                logging.info("Fetched page but no after parameter found, this might be the last page")
-            yield new_after
+        new_after = response_json['data'].get('after')
+        if new_after:
+            logging.info(f"Fetched page with after={new_after}")
+        else:
+            logging.info("Fetched page but no after parameter found, this might be the last page")
+        yield new_after
     except GeneratorExit:
         logging.info("GeneratorExit received in fetch_posts, exiting gracefully.")
         raise
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
         yield None
-
-
-
-
-
 
 def is_valid_item(item, min_post_length):
     if len(item.content) < min_post_length \
@@ -276,7 +265,7 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
             last_after = None
             while items_fetched < 1000 and not collector.should_stop_fetching():
                 logging.info(f"Fetching page {page_number} for subreddit {subreddit_url} with after={after}")
-                async for result in fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, post_limit, after):
+                async for result in fetch_posts_and_comments(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, post_limit, after):
                     if isinstance(result, str):
                         last_after = after
                         after = result
@@ -295,9 +284,6 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
         except Exception as e:
             logging.error(f"Error inside limited_fetch: {e}")
 
-
-
-
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
@@ -315,24 +301,24 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
 
     session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit_per_host=MAX_CONCURRENT_TASKS))
     try:
-        async for url_response in fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector):
-            if not url_response or 'urls' not in url_response:
-                logging.error("Failed to get subreddit URLs from proxy")
-                return
+        url_response = await fetch_with_proxy(session, f'{MANAGER_IP}/get_urls?batch_size={batch_size}', collector)
+        if not url_response or 'urls' not in url_response:
+            logging.error("Failed to get subreddit URLs from proxy")
+            return
 
-            subreddit_urls = url_response['urls']
+        subreddit_urls = url_response['urls']
 
-            semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-            tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) for subreddit_url in subreddit_urls]
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+        tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) for subreddit_url in subreddit_urls]
 
-            for task in tasks:
-                async for item in task:
-                    yield item
-
-            for index, item in enumerate(collector.items, start=1):
-                item = post_process_item(item)
-                logging.info(f"Found comment {index}: {item}")
+        for task in asyncio.as_completed(tasks):
+            async for item in task:
                 yield item
+
+        for index, item in enumerate(collector.items, start=1):
+            item = post_process_item(item)
+            logging.info(f"Found comment {index}: {item}")
+            yield item
     except GeneratorExit:
         logging.info("GeneratorExit received in query, exiting gracefully.")
         raise
