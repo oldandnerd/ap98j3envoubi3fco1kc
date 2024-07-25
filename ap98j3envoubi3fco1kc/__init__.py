@@ -138,7 +138,6 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                 comment_data = comment['data']
                 comment_created_at = comment_data['created_utc']
 
-                # Skip comments by AutoModerator
                 if comment_data.get('author') == 'AutoModerator':
                     logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
                     continue
@@ -149,9 +148,8 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                 comment_content = comment_data.get('body', '[deleted]')
                 comment_author = comment_data.get('author', '[unknown]')
                 comment_url = f"https://reddit.com{comment_data['permalink']}"
-                comment_id = comment_data['name']  # Extracting the comment ID
+                comment_id = comment_data['name']
 
-                # Check if the content is valid (not empty and not just a URL)
                 if len(comment_content.strip()) < min_post_length or comment_content.strip().startswith('http'):
                     logging.info(f"Skipping invalid comment: {comment_data['id']} with content '{comment_content}'")
                     continue
@@ -164,7 +162,7 @@ async def fetch_comments(session, post_permalink, collector, max_oldness_seconds
                     url=Url(comment_url),
                 )
 
-                if await collector.add_item(item, comment_id):  # Using comment_id to avoid duplicates
+                if await collector.add_item(item, comment_id):
                     logging.info(f"New valid comment found: {item}")
                     yield item
     except GeneratorExit:
@@ -184,13 +182,11 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
         if after:
             params['after'] = after
 
-        # Correctly format the subreddit URL to ensure query parameters are added correctly
         if not subreddit_url.endswith('.json'):
             subreddit_url_with_limit = f"{subreddit_url.rstrip('/')}/.json"
         else:
             subreddit_url_with_limit = subreddit_url
 
-        # Adding the query parameters to the URL
         query_params = '&'.join([f'{key}={value}' for key, value in params.items()])
         final_url = f"{subreddit_url_with_limit}?{query_params}"
 
@@ -215,6 +211,12 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                 post_permalink = post_info.get('permalink', None)
                 post_created_at = post_info.get('created_utc', 0)
 
+                # Fetch comments for the post regardless of whether the post meets the criteria
+                if post_permalink:
+                    async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
+                        yield comment
+
+                # Check if the post itself meets the criteria
                 if is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
                     post_content = post_info.get('selftext', '[deleted]')
                     post_author = post_info.get('author', '[unknown]')
@@ -237,10 +239,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
                     if await collector.add_item(item, post_id):
                         logging.info(f"New valid post found: {item}")
                         yield item
-
-                    if post_permalink:
-                        async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
-                            yield comment
 
             new_after = response_json['data'].get('after')
             if new_after:
