@@ -2,23 +2,23 @@ import aiohttp
 import asyncio
 import hashlib
 import logging
-import random  # Importing the random module for weighted_choice function
+import random
 import re
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Dict, List
 from wordsegment import load, segment
 from exorde_data import Item, Content, Title, Author, CreatedAt, Url, Domain
-from aiohttp import ClientConnectorError, web
+from aiohttp import ClientConnectorError
 
 logging.basicConfig(level=logging.INFO)
 
-MANAGER_IP = "http://192.227.159.3:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 50
 MAX_RETRIES_PROXY = 5  # Maximum number of retries for 503 errors
 
 load()  # Load the wordsegment library data
 
+# Initialize subreddit lists
 # Initialize subreddit lists
 subreddits_top_225 = [
     "r/all",
@@ -403,6 +403,7 @@ subreddits_top_1000 = [
 ]
 
 
+
 def weighted_choice(subreddits_225, subreddits_1000, weight_225=0.75, weight_1000=0.25):
     combined_list = [(subreddit, weight_225) for subreddit in subreddits_225] + \
                     [(subreddit, weight_1000) for subreddit in subreddits_1000]
@@ -420,7 +421,6 @@ async def handle_get_urls(batch_size: int):
         urls.append(subreddit_url)
     
     return {"urls": urls}, 200
-
 
 class CommentCollector:
     def __init__(self, max_items):
@@ -712,20 +712,32 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     current_time = datetime.now(timezone.utc).timestamp()
 
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit_per_host=MAX_CONCURRENT_TASKS)) as session:
-        urls_response, status = await handle_get_urls(batch_size)
-        if status != 200:
-            logging.error("Failed to get subreddit URLs")
-            return
+        try:
+            urls_response, status = await handle_get_urls(batch_size)
+            if status != 200:
+                logging.error("Failed to get subreddit URLs")
+                return
 
-        subreddit_urls = urls_response['urls']
+            subreddit_urls = urls_response['urls']
 
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-        tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) for subreddit_url in subreddit_urls]
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+            tasks = [limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) for subreddit_url in subreddit_urls]
 
-        all_items = await asyncio.gather(*tasks)
+            all_tasks = asyncio.gather(*tasks)
 
-        for items in all_items:
-            for item in items:
-                item = post_process_item(item)
-                logging.info(f"Found item: {item}")
-                yield item
+            try:
+                all_items = await all_tasks
+
+                for items in all_items:
+                    for item in items:
+                        item = post_process_item(item)
+                        logging.info(f"Found item: {item}")
+                        yield item
+            except GeneratorExit:
+                logging.info("GeneratorExit received in query, canceling all tasks.")
+                all_tasks.cancel()
+                raise
+        except Exception as e:
+            logging.error(f"Error in query: {e}")
+        finally:
+            logging.info("Cleaning up: closing session.")
