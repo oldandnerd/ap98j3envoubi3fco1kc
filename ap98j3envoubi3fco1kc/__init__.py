@@ -11,7 +11,7 @@ from exorde_data import Item, Content, Title, Author, CreatedAt, Url, Domain
 from aiohttp import ClientConnectorError
 
 logging.basicConfig(level=logging.INFO)
-MANAGER_IP = "http://192.227.159.3:8000"
+MANAGER_IP = "http://84.52.244.233:8000"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 MAX_CONCURRENT_TASKS = 50
 MAX_RETRIES_PROXY = 5  # Maximum number of retries for 503 errors
