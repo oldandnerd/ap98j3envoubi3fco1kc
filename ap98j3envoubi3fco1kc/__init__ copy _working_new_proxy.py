@@ -700,8 +700,8 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
     min_post_length = parameters.get('min_post_length')
-    batch_size = parameters.get('batch_size', 2)
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 2)
+    batch_size = parameters.get('batch_size', 10)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 10)
     post_limit = parameters.get('post_limit', 100)  # Limit for the number of posts per subreddit
 
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
