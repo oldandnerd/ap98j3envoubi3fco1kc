@@ -617,25 +617,23 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
 
                 post_permalink = post_info.get('permalink', None)
                 post_created_at = post_info.get('created_utc', 0)
-                num_comments = post_info.get('num_comments', 0)
 
-                # Skip the post if it is old and has no comments
-                if not is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time) and num_comments == 0:
-                    logging.info(f"Skipping old post with no comments: {post_info.get('id')}")
-                    continue
-
-                # Fetch comments for the post if it has comments
-                if post_permalink and num_comments > 0:
+                # Fetch comments for the post regardless of whether the post meets the criteria
+                if post_permalink:
                     async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
                         yield comment
 
-                # Check if the post itself meets the criteria and fetch it if valid
-                post_content = post_info.get('selftext', '[deleted]')
-                post_author = post_info.get('author', '[unknown]')
-                post_url = f"https://reddit.com{post_permalink}"
-                post_id = post_info['name']
+                # Check if the post itself meets the criteria
+                if is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
+                    post_content = post_info.get('selftext', '[deleted]')
+                    post_author = post_info.get('author', '[unknown]')
+                    post_url = f"https://reddit.com{post_permalink}"
+                    post_id = post_info['name']
 
-                if is_valid_item(post_content, post_url, min_post_length):
+                    if not is_valid_item(post_content, post_url, min_post_length):
+                        logging.info(f"Skipping invalid post: {post_id} with content '{post_content}'")
+                        continue
+
                     item = Item(
                         title=Title(post_info.get('title', '[deleted]')),
                         content=Content(post_content),
@@ -661,7 +659,6 @@ async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, mi
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
         yield None
-
 
 def is_valid_item(content, url, min_post_length):
     if len(content.strip()) < min_post_length or content.strip().startswith('http') or \
