@@ -492,8 +492,8 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-def is_within_timeframe_seconds(created_utc, current_time, max_oldness_seconds, buffer_seconds=300):
-    return (current_time - created_utc) <= (max_oldness_seconds - buffer_seconds)
+def is_within_timeframe_seconds(created_utc, max_oldness_seconds, current_time):
+    return (current_time - created_utc) <= max_oldness_seconds
 
 def extract_subreddit_name(input_string):
     match = re.search(r'r/([^/]+)', input_string)
@@ -520,7 +520,7 @@ def post_process_item(item):
         logging.warning(f"[Reddit] failed to correct the URL of item {item.url}")
     return item
 
-async def fetch_comments(session, post_permalink, collector, min_post_length, current_time, max_oldness_seconds) -> AsyncGenerator[Item, None]:
+async def fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time) -> AsyncGenerator[Item, None]:
     stopping_logged = False
     try:
         comments_url = f"https://www.reddit.com{post_permalink}.json"
@@ -548,7 +548,7 @@ async def fetch_comments(session, post_permalink, collector, min_post_length, cu
                     logging.info(f"Skipping AutoModerator comment: {comment_data['id']}")
                     continue
 
-                if not is_within_timeframe_seconds(comment_created_at, current_time, max_oldness_seconds):
+                if not is_within_timeframe_seconds(comment_created_at, max_oldness_seconds, current_time):
                     continue
 
                 comment_content = comment_data.get('body', '[deleted]')
@@ -577,7 +577,7 @@ async def fetch_comments(session, post_permalink, collector, min_post_length, cu
     except Exception as e:
         logging.error(f"Error in fetch_comments: {e}")
 
-async def fetch_posts(session, subreddit_url, collector, min_post_length, current_time, max_oldness_seconds, limit=100, after=None) -> AsyncGenerator[Item, None]:
+async def fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, limit=100, after=None) -> AsyncGenerator[Item, None]:
     stopping_logged = False
     try:
         params = {
@@ -620,11 +620,11 @@ async def fetch_posts(session, subreddit_url, collector, min_post_length, curren
 
                 # Fetch comments for the post regardless of whether the post meets the criteria
                 if post_permalink:
-                    async for comment in fetch_comments(session, post_permalink, collector, min_post_length, current_time, max_oldness_seconds):
+                    async for comment in fetch_comments(session, post_permalink, collector, max_oldness_seconds, min_post_length, current_time):
                         yield comment
 
                 # Check if the post itself meets the criteria
-                if is_within_timeframe_seconds(post_created_at, current_time, max_oldness_seconds):
+                if is_within_timeframe_seconds(post_created_at, max_oldness_seconds, current_time):
                     post_content = post_info.get('selftext', '[deleted]')
                     post_author = post_info.get('author', '[unknown]')
                     post_url = f"https://reddit.com{post_permalink}"
@@ -659,7 +659,6 @@ async def fetch_posts(session, subreddit_url, collector, min_post_length, curren
     except Exception as e:
         logging.error(f"Error in fetch_posts: {e}")
         yield None
-
 
 def is_valid_item(content, url, min_post_length):
     if len(content.strip()) < min_post_length or content.strip().startswith('http') or \
@@ -698,12 +697,12 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
         return items
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
-    max_oldness_seconds = parameters.get('max_oldness_seconds', 600)  # Default to 600 seconds (10 minutes)
+    max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
-    min_post_length = parameters.get('min_post_length', 0)  # Default to 0 if not provided
-    batch_size = parameters.get('batch_size', 50)  # Default to 50 if not provided
-    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 3)  # Default to 3 if not provided
-    post_limit = parameters.get('post_limit', 100)  # Default to 100 if not provided
+    min_post_length = parameters.get('min_post_length')
+    batch_size = parameters.get('batch_size', 50)
+    nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 3)
+    post_limit = parameters.get('post_limit', 100)  # Limit for the number of posts per subreddit
 
     logging.info(f"[Reddit] Input parameters: max_oldness_seconds={max_oldness_seconds}, "
                  f"maximum_items_to_collect={maximum_items_to_collect}, min_post_length={min_post_length}, "
