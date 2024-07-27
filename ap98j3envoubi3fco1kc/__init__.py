@@ -666,21 +666,16 @@ def is_valid_item(content, url, min_post_length):
         return False
     return True
 
-async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) -> AsyncGenerator[Item, None]:
+async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, nb_subreddit_attempts, post_limit) -> List[Item]:
     async with semaphore:
-        items_fetched = 0
-        attempts = 0
-        after = None
-        page_number = 1
-        last_after = None
-
-        while items_fetched < 1000 and not collector.should_stop_fetching():
-            if attempts >= nb_subreddit_attempts:
-                logging.info(f"Maximum attempts reached for subreddit {subreddit_url}. Stopping fetch attempts.")
-                break
-
-            logging.info(f"Fetching page {page_number} for subreddit {subreddit_url} with after={after}")
-            try:
+        items = []
+        try:
+            after = None
+            items_fetched = 0
+            page_number = 1
+            last_after = None
+            while items_fetched < 1000 and not collector.should_stop_fetching():
+                logging.info(f"Fetching page {page_number} for subreddit {subreddit_url} with after={after}")
                 async for result in fetch_posts(session, subreddit_url, collector, max_oldness_seconds, min_post_length, current_time, post_limit, after):
                     if isinstance(result, str):
                         last_after = after
@@ -688,18 +683,18 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
                     elif result is None:
                         break
                     else:
-                        yield result
+                        items.append(result)
                         items_fetched += 1
-
                 if not after or after == last_after:
                     logging.info(f"No more pages to fetch for subreddit {subreddit_url} or after parameter did not change.")
                     break
-
                 page_number += 1
-            except Exception as e:
-                logging.error(f"Error inside limited_fetch: {e}")
-            finally:
-                attempts += 1
+        except GeneratorExit:
+            logging.info("GeneratorExit received inside limited_fetch, exiting gracefully.")
+            raise
+        except Exception as e:
+            logging.error(f"Error inside limited_fetch: {e}")
+        return items
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
