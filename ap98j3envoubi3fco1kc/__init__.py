@@ -701,7 +701,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     maximum_items_to_collect = 200  # Force the maximum items to collect to be 200
     #maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
     min_post_length = parameters.get('min_post_length')
-    batch_size = parameters.get('batch_size', 200)
+    batch_size = parameters.get('batch_size', 50)
     nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 3)
     post_limit = parameters.get('post_limit', 100)  # Limit for the number of posts per subreddit
 
