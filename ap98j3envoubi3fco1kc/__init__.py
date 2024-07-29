@@ -698,7 +698,8 @@ async def limited_fetch(semaphore, session, subreddit_url, collector, max_oldnes
 
 async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = 300 #parameters.get('max_oldness_seconds')
-    maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
+    maximum_items_to_collect = 200  # Force the maximum items to collect to be 200
+    #maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
     min_post_length = parameters.get('min_post_length')
     batch_size = parameters.get('batch_size', 200)
     nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 3)
