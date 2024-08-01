@@ -20,7 +20,7 @@ load()  # Load the wordsegment library data
 
 # Initialize subreddit lists
 # Initialize subreddit lists
-subreddits_top_225 = [
+"""subreddits_top_225 = [
     "r/all",
     "r/all",
     "r/all",
@@ -402,7 +402,211 @@ subreddits_top_1000 = [
     "r/Calgary","r/furry","r/csMajors","r/Bedbugs","r/DBZDokkanBattle","r/mumbai","r/popheadscirclejerk","r/marvelmemes","r/Egypt","r/Topster",
 ]
 
+"""
 
+
+subreddits_top_225 = [
+    "r/announcements",
+    "r/funny",
+    "r/AskReddit",
+    "r/gaming",
+    "r/aww",
+    "r/Music",
+    "r/worldnews",
+    "r/pics",
+    "r/movies",
+    "r/todayilearned",
+    "r/science",
+    "r/videos",
+    "r/Showerthoughts",
+    "r/news",
+    "r/Jokes",
+    "r/askscience",
+    "r/food",
+    "r/EarthPorn",
+    "r/IAmA",
+    "r/nottheonion",
+    "r/DIY",
+    "r/gifs",
+    "r/books",
+    "r/space",
+    "r/Art",
+    "r/explainlikeimfive",
+    "r/LifeProTips",
+    "r/memes",
+    "r/mildlyinteresting",
+    "r/sports",
+    "r/gadgets",
+    "r/Documentaries",
+    "r/blog",
+    "r/dataisbeautiful",
+    "r/UpliftingNews",
+    "r/GetMotivated",
+    "r/tifu",
+    "r/photoshopbattles",
+    "r/listentothis",
+    "r/history",
+    "r/philosophy",
+    "r/Futurology",
+    "r/OldSchoolCool",
+    "r/nosleep",
+    "r/television",
+    "r/personalfinance",
+    "r/InternetIsBeautiful",
+    "r/WritingPrompts",
+    "r/creepy",
+    "r/TwoXChromosomes",
+    "r/technology",
+    "r/wallstreetbets",
+    "r/wholesomememes",
+    "r/interestingasfuck",
+    "r/Fitness",
+    "r/AdviceAnimals",
+    "r/lifehacks",
+    "r/politics",
+    "r/NatureIsFuckingLit",
+    "r/Unexpected",
+    "r/oddlysatisfying",
+    "r/relationship_advice",
+    "r/WTF",
+    "r/travel",
+    "r/Minecraft",
+    "r/dadjokes",
+    "r/nextfuckinglevel",
+    "r/Whatcouldgowrong",
+    "r/pcmasterrace",
+    "r/facepalm",
+    "r/MadeMeSmile",
+    "r/me_irl",
+    "r/Damnthatsinteresting",
+    "r/buildapc",
+    "r/leagueoflegends",
+    "r/AnimalsBeingDerps",
+    "r/AnimalsBeingBros",
+    "r/dankmemes",
+    "r/BlackPeopleTwitter",
+    "r/Tinder",
+    "r/PS4",
+    "r/place",
+    "r/CryptoCurrency",
+    "r/bestof",
+    "r/tattoos",
+    "r/AnimalsBeingJerks",
+    "r/nba",
+    "r/HistoryMemes",
+    "r/anime",
+    "r/gardening",
+    "r/photography",
+    "r/mildlyinfuriating",
+    "r/Awwducational",
+    "r/WatchPeopleDieInside",
+    "r/Parenting",
+    "r/malefashionadvice",
+    "r/EatCheapAndHealthy",
+    "r/FoodPorn",
+    "r/programming",
+    "r/AmItheAsshole",
+    "r/stocks",
+    "r/BikiniBottomTwitter",
+    "r/trippinthroughtime",
+    "r/woodworking",
+    "r/AmItheAsshole",
+    "r/instant_regret",
+    "r/PublicFreakout",
+    "r/pokemon",
+    "r/NintendoSwitch",
+    "r/ContagiousLaughter",
+    "r/rarepuppers",
+    "r/dating_advice",
+    "r/woahdude",
+    "r/AskMen",
+    "r/pokemongo",
+    "r/gonewild",
+    "r/BeAmazed",
+    "r/reactiongifs",
+    "r/Overwatch",
+    "r/HighQualityGifs",
+    "r/itookapicture",
+    "r/IdiotsInCars",
+    "r/Outdoors",
+    "r/xboxone",
+    "r/HumansBeingBros",
+    "r/YouShouldKnow",
+    "r/AskWomen",
+    "r/iphone",
+    "r/streetwear",
+    "r/cats",
+    "r/boardgames",
+    "r/PewdiepieSubmissions",
+    "r/nonononoyes",
+    "r/apple",
+    "r/Eyebleach",
+    "r/loseit",
+    "r/soccer",
+    "r/nsfw",
+    "r/drawing",
+    "r/Cooking",
+    "r/starterpacks",
+    "r/cars",
+    "r/MovieDetails",
+    "r/NetflixBestOf",
+    "r/GifRecipes",
+    "r/europe",
+    "r/confession",
+    "r/recipes",
+    "r/cursedcomments",
+    "r/relationships",
+    "r/blackmagicfuckery",
+    "r/battlestations",
+    "r/MakeupAddiction",
+    "r/HistoryPorn",
+    "r/learnprogramming",
+    "r/backpacking",
+    "r/RealGirls",
+    "r/scifi",
+    "r/therewasanattempt",
+    "r/keto",
+    "r/KidsAreFuckingStupid",
+    "r/HolUp",
+    "r/entertainment",
+    "r/socialskills",
+    "r/howto",
+    "r/HomeImprovement",
+    "r/Games",
+    "r/slowcooking",
+    "r/gameofthrones",
+    "r/DeepIntoYouTube",
+    "r/CrappyDesign",
+    "r/Sneakers",
+    "r/BetterEveryLoop",
+    "r/raspberry_pi",
+    "r/OutOfTheLoop",
+    "r/humor",
+    "r/biology",
+    "r/youtubehaiku",
+    "r/pcgaming",
+    "r/Wellthatsucks",
+    "r/foodhacks",
+    "r/teenagers",
+    "r/hardware",
+    "r/camping",
+    "r/NoStupidQuestions",
+    "r/frugalmalefashion",
+    "r/offmychest",
+    "r/trashy",
+    "r/assholedesign",
+    "r/atheism",
+    "r/MurderedByWords",
+    "r/ChildrenFallingOver",
+    "r/DnD",
+    "r/marvelstudios",
+    "r/mac",
+    "r/nutrition",
+    "r/nfl",
+    "r/unpopularopinion",
+    "r/Filmmakers",
+    "r/bodyweightfitness"
+]
 
 def weighted_choice(subreddits_225, subreddits_1000, weight_225=0.75, weight_1000=0.25):
     combined_list = [(subreddit, weight_225) for subreddit in subreddits_225] + \
@@ -410,6 +614,22 @@ def weighted_choice(subreddits_225, subreddits_1000, weight_225=0.75, weight_100
     subreddits, weights = zip(*combined_list)
     return random.choices(subreddits, weights=weights, k=1)[0]
 
+
+
+async def handle_get_urls(batch_size: int):
+    if not subreddits_top_225:
+        return {"message": "Subreddit list is empty. Please fill it."}, 400
+    
+    urls = []
+    for _ in range(batch_size):
+        subreddit = random.choice(subreddits_top_225)
+        subreddit_url = f"https://reddit.com/r/{subreddit.lstrip('r/')}"
+        urls.append(subreddit_url)
+    
+    return {"urls": urls}, 200
+
+
+"""
 async def handle_get_urls(batch_size: int):
     if not subreddits_top_225 and not subreddits_top_1000:
         return {"message": "Subreddit lists are empty. Please fill them."}, 400
@@ -421,7 +641,7 @@ async def handle_get_urls(batch_size: int):
         urls.append(subreddit_url)
     
     return {"urls": urls}, 200
-
+"""
 class CommentCollector:
     def __init__(self, max_items):
         self.total_items_collected = 0
@@ -469,11 +689,12 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
                 retry_logged = True
             await asyncio.sleep(10)
         except aiohttp.ClientResponseError as e:
-            if e.status == 503:
+            if e.status in (429, 503):
+                retry_after = int(response.headers.get('retry-after', 2))  # Default to 2 seconds if header is missing
                 if not retry_logged:
-                    logging.info("No available IPs. Retrying in 2 seconds...")
+                    logging.info(f"Received {e.status} response. Retrying in {retry_after} seconds...")
                     retry_logged = True
-                await asyncio.sleep(2)
+                await asyncio.sleep(retry_after)
                 retries += 1
             else:
                 error_message = await response.json()
@@ -488,6 +709,7 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
             logging.error(f"Error fetching URL {url}: {e}")
             return
     logging.error(f"Maximum retries reached for URL {url}. Skipping.")
+
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
