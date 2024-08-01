@@ -693,7 +693,7 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
                 if not retry_logged:
                     logging.info("No available IPs. Retrying in 2 seconds...")
                     retry_logged = True
-                await asyncio.sleep(2)
+                await asyncio.sleep(10)
                 retries += 1
             else:
                 error_message = await response.json()
@@ -920,7 +920,7 @@ async def query(parameters: Dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds = parameters.get('max_oldness_seconds')
     maximum_items_to_collect = parameters.get('maximum_items_to_collect', 25)  # Default to 25 if not provided
     min_post_length = parameters.get('min_post_length')
-    batch_size = parameters.get('batch_size', 1)
+    batch_size = parameters.get('batch_size', 5)
     nb_subreddit_attempts = parameters.get('nb_subreddit_attempts', 5)
     post_limit = parameters.get('post_limit', 100)  # Limit for the number of posts per subreddit
 
