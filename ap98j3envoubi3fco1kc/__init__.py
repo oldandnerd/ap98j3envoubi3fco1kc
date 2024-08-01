@@ -689,12 +689,11 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
                 retry_logged = True
             await asyncio.sleep(10)
         except aiohttp.ClientResponseError as e:
-            if e.status in (429, 503):
-                retry_after = int(response.headers.get('retry-after', 2))  # Default to 2 seconds if header is missing
+            if e.status == 503:
                 if not retry_logged:
-                    logging.info(f"Received {e.status} response. Retrying in {retry_after} seconds...")
+                    logging.info("No available IPs. Retrying in 2 seconds...")
                     retry_logged = True
-                await asyncio.sleep(retry_after)
+                await asyncio.sleep(2)
                 retries += 1
             else:
                 error_message = await response.json()
@@ -709,7 +708,6 @@ async def fetch_with_proxy(session, url, collector, params=None) -> AsyncGenerat
             logging.error(f"Error fetching URL {url}: {e}")
             return
     logging.error(f"Maximum retries reached for URL {url}. Skipping.")
-
 
 def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
