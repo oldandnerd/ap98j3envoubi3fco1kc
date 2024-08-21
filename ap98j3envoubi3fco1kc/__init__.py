@@ -2,14 +2,18 @@ import aiohttp
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Dict, Any
+from typing import AsyncGenerator, Dict, Any, List
 from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
 
 # Configuration
 API_ENDPOINT = "http://reddit_server:8000/fetch_reddit_posts"
 DEFAULT_MAXIMUM_ITEMS = 25  # Default number of items to collect
-DEFAULT_BATCH_SIZE = 20     # Default number of items to fetch per batch
+DEFAULT_BATCH_SIZE = 60     # Default number of items to fetch per batch
 RETRY_DELAY = 5             # Delay in seconds before retrying
+REFILL_THRESHOLD_PERCENT = 0.10  # Threshold percentage for refilling
+
+# Global list to hold items
+global_item_list: List[Item] = []
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,14 +54,11 @@ def parse_item(data: dict) -> Item:
 
     # Convert created_at to the required format using CreatedAt class
     try:
-        # Parse the timestamp assuming it is in UTC
-        created_at_dt = datetime.strptime(created_at_raw, "%Y-%m-%d %H:%M:%S")
-        # Format to ISO8601 with Z suffix
+        created_at_dt = datetime.strptime(created_at_raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
         created_at_str = created_at_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         created_at = CreatedAt(created_at_str)
     except ValueError as e:
         logging.error(f"Error parsing CreatedAt timestamp: {e}")
-        # Handle the error as needed, maybe raise an exception or return a default value
         created_at = CreatedAt("1970-01-01T00:00:00Z")  # Default value if parsing fails
 
     return Item(
@@ -69,14 +70,40 @@ def parse_item(data: dict) -> Item:
         domain=domain,
     )
 
+async def refill_global_list(api_endpoint: str, batch_size: int, total_capacity: int):
+    """
+    Refill the global item list if it is below the threshold percentage.
+    """
+    global global_item_list
+    current_size = len(global_item_list)
+    threshold = total_capacity * REFILL_THRESHOLD_PERCENT
+
+    if current_size <= threshold:
+        logging.info(f"Refilling global item list. Current size: {current_size}, Threshold: {threshold}")
+        data = await fetch_data(api_endpoint, batch_size)
+        new_items = [parse_item(entry) for entry in data]
+        global_item_list.extend(new_items)
+        logging.info(f"Refilled global item list. New size: {len(global_item_list)}")
+
 async def scrape(api_endpoint: str, batch_size: int) -> AsyncGenerator[Item, None]:
     """
     Main scraping logic that fetches and yields parsed Item objects.
     """
-    raw_data = await fetch_data(api_endpoint, batch_size=batch_size)
-    for entry in raw_data:
-        item = parse_item(entry)
-        yield item
+    global global_item_list
+
+    # Ensure global list is filled initially
+    await refill_global_list(api_endpoint, batch_size, DEFAULT_MAXIMUM_ITEMS)
+
+    while True:
+        if not global_item_list:
+            await refill_global_list(api_endpoint, batch_size, DEFAULT_MAXIMUM_ITEMS)
+
+        if global_item_list:
+            item = global_item_list.pop(0)
+            yield item
+        else:
+            # Break the loop if no items are available and cannot refill
+            break
 
 async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
     """
@@ -88,11 +115,11 @@ async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
 
     items_collected = 0
 
-    while items_collected < maximum_items_to_collect:
-        async for item in scrape(api_endpoint, batch_size=batch_size):
-            yield item
-            items_collected += 1
-            logging.info(f"Collected {items_collected} items so far.")
-            
-            if items_collected >= maximum_items_to_collect:
-                break
+    async for item in scrape(api_endpoint, batch_size=batch_size):
+        yield item
+        items_collected += 1
+        logging.info(f"Collected {items_collected} items so far.")
+        
+        if items_collected >= maximum_items_to_collect:
+            break
+
