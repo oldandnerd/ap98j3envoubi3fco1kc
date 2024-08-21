@@ -52,14 +52,12 @@ def parse_item(data: dict) -> Item:
     url = Url(data.get("Url", ""))
     domain = Domain(data.get("Domain", ""))
 
-    # Convert created_at to the required format using CreatedAt class
+    # Skip item if CreatedAt cannot be parsed
     try:
-        created_at_dt = datetime.strptime(created_at_raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-        created_at_str = created_at_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-        created_at = CreatedAt(created_at_str)
+        created_at = CreatedAt(created_at_raw)
     except ValueError as e:
-        logging.error(f"Error parsing CreatedAt timestamp: {e}")
-        created_at = CreatedAt("1970-01-01T00:00:00Z")  # Default value if parsing fails
+        logging.error(f"Skipping item due to error parsing CreatedAt timestamp: {e}")
+        return None
 
     return Item(
         content=content,
@@ -81,7 +79,7 @@ async def refill_global_list(api_endpoint: str, batch_size: int, total_capacity:
     if current_size <= threshold:
         logging.info(f"Refilling global item list. Current size: {current_size}, Threshold: {threshold}")
         data = await fetch_data(api_endpoint, batch_size)
-        new_items = [parse_item(entry) for entry in data]
+        new_items = [parse_item(entry) for entry in data if parse_item(entry) is not None]
         global_item_list.extend(new_items)
         logging.info(f"Refilled global item list. New size: {len(global_item_list)}")
 
@@ -122,4 +120,3 @@ async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
         
         if items_collected >= maximum_items_to_collect:
             break
-
