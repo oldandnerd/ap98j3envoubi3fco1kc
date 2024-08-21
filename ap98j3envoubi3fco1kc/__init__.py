@@ -39,9 +39,11 @@ def parse_item(data: dict) -> Item:
 
     # Convert created_at to the required format using CreatedAt class
     try:
-        created_at_dt = datetime.strptime(created_at_raw, "%Y-%m-%dT%H:%M:%S%z")
-        created_at_utc = created_at_dt.astimezone(timezone.utc)
-        created_at = CreatedAt(created_at_utc.isoformat().replace("+00:00", "Z"))
+        # Parse the timestamp assuming it is in UTC
+        created_at_dt = datetime.strptime(created_at_raw, "%Y-%m-%d %H:%M:%S")
+        # Format to ISO8601 with Z suffix
+        created_at_str = created_at_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        created_at = CreatedAt(created_at_str)
     except ValueError as e:
         logging.error(f"Error parsing CreatedAt timestamp: {e}")
         # Handle the error as needed, maybe raise an exception or return a default value
@@ -83,3 +85,4 @@ async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
             
             if items_collected >= maximum_items_to_collect:
                 break
+
