@@ -6,7 +6,7 @@ from typing import AsyncGenerator, Dict, Any
 from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
 
 # Configuration
-API_ENDPOINT = "http://reddit_server:8081/fetch_reddit_posts"
+API_ENDPOINT = "http://reddit_server:8000/fetch_reddit_posts"
 DEFAULT_MAXIMUM_ITEMS = 25  # Default number of items to collect
 DEFAULT_BATCH_SIZE = 20     # Default number of items to fetch per batch
 
