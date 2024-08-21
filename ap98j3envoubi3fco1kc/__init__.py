@@ -2,18 +2,19 @@ import aiohttp
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Dict, Any
 from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
 
+# Configuration
 API_ENDPOINT = "http://reddit_server:8081/fetch_reddit_posts"
 DEFAULT_MAXIMUM_ITEMS = 25  # Default number of items to collect
-DEFAULT_BATCH_SIZE = 20      # Default number of items to fetch per batch
+DEFAULT_BATCH_SIZE = 20     # Default number of items to fetch per batch
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
 class RedditScraperClient:
-    def __init__(self, api_endpoint: str):
+    def __init__(self, api_endpoint: str = API_ENDPOINT):
         self.api_endpoint = api_endpoint
 
     async def fetch_data(self, batch_size: int = DEFAULT_BATCH_SIZE) -> list:
@@ -62,7 +63,7 @@ class RedditScraperClient:
             item = self.parse_item(entry)
             yield item
 
-    async def query(self, parameters: dict) -> AsyncGenerator[Item, None]:
+    async def query(self, parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
         """
         Main interface between the client core and the scraper. Yields items.
         """
@@ -79,3 +80,4 @@ class RedditScraperClient:
                 
                 if items_collected >= maximum_items_to_collect:
                     break
+
