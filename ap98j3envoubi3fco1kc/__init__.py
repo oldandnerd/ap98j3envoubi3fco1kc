@@ -38,8 +38,14 @@ def parse_item(data: dict) -> Item:
     domain = Domain(data.get("Domain", ""))
 
     # Convert created_at to the required format using CreatedAt class
-    created_at_dt = datetime.strptime(created_at_raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-    created_at = CreatedAt(created_at_dt.isoformat())
+    try:
+        created_at_dt = datetime.strptime(created_at_raw, "%Y-%m-%dT%H:%M:%S%z")
+        created_at_utc = created_at_dt.astimezone(timezone.utc)
+        created_at = CreatedAt(created_at_utc.isoformat().replace("+00:00", "Z"))
+    except ValueError as e:
+        logging.error(f"Error parsing CreatedAt timestamp: {e}")
+        # Handle the error as needed, maybe raise an exception or return a default value
+        created_at = CreatedAt("1970-01-01T00:00:00Z")  # Default value if parsing fails
 
     return Item(
         content=content,
