@@ -9,22 +9,33 @@ from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
 API_ENDPOINT = "http://reddit_server:8000/fetch_reddit_posts"
 DEFAULT_MAXIMUM_ITEMS = 25  # Default number of items to collect
 DEFAULT_BATCH_SIZE = 20     # Default number of items to fetch per batch
+RETRY_DELAY = 5             # Delay in seconds before retrying
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
 async def fetch_data(api_endpoint: str, batch_size: int = DEFAULT_BATCH_SIZE) -> list:
     """
-    Fetch data from the Reddit scraping server.
+    Fetch data from the Reddit scraping server with retry on 404 error.
     """
-    async with aiohttp.ClientSession() as session:
-        async with session.get(f"{api_endpoint}?size={batch_size}") as response:
-            if response.status == 200:
-                data = await response.json()
-                return data
-            else:
-                logging.error(f"Failed to fetch data: {response.status}")
-                return []
+    for attempt in range(3):  # Number of retry attempts
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(f"{api_endpoint}?size={batch_size}") as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data
+                    elif response.status == 404:
+                        logging.error(f"Data not found (404). Retrying in {RETRY_DELAY} seconds...")
+                        await asyncio.sleep(RETRY_DELAY)
+                    else:
+                        logging.error(f"Failed to fetch data: {response.status}")
+                        return []
+            except aiohttp.ClientError as e:
+                logging.error(f"HTTP request failed: {e}")
+                await asyncio.sleep(RETRY_DELAY)
+    logging.error("Max retries reached. No data fetched.")
+    return []
 
 def parse_item(data: dict) -> Item:
     """
@@ -85,4 +96,3 @@ async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
             
             if items_collected >= maximum_items_to_collect:
                 break
-
