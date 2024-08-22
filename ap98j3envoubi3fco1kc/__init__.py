@@ -7,7 +7,6 @@ from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
 
 # Configuration
 API_ENDPOINTS = [
-    "http://reddit_server_1:8000/fetch_reddit_posts",
     "http://84.52.244.233:8000/fetch_reddit_posts",
     "http://192.168.10.142:8000/fetch_reddit_posts"
 ]
