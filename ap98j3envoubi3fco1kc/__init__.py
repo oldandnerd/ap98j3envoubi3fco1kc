@@ -139,7 +139,7 @@ async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
     async for item in scrape(api_endpoints):
         yield item
         items_collected += 1
-        logging.info(f"Collected {items_collected} items so far.")
+        #logging.info(f"Collected {items_collected} items so far.")
         
         if items_collected >= maximum_items_to_collect:
             break
