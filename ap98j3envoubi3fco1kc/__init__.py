@@ -1,7 +1,8 @@
-import aiohttp
+import time
+import heapq
 import asyncio
+import aiohttp
 import logging
-from datetime import datetime, timezone
 from typing import List, Dict, Any, AsyncGenerator
 from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
 
@@ -13,12 +14,33 @@ API_ENDPOINTS = [
 DEFAULT_MAXIMUM_ITEMS = 25  # Default number of items to collect
 RETRY_DELAY = 5             # Delay in seconds before retrying
 QUEUE_MAX_SIZE = 200        # Maximum size of the queue
+QUEUE_REFILL_THRESHOLD = 20  # Threshold to trigger refill when queue size is below this value
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
-# Create an asynchronous queue to hold fetched items
-item_queue = asyncio.Queue(maxsize=QUEUE_MAX_SIZE)
+class AgingPriorityQueue:
+    def __init__(self):
+        self.queue = []
+        self.counter = 0
+
+    def put(self, item, priority):
+        heapq.heappush(self.queue, (priority, self.counter, time.time(), item))
+        self.counter += 1
+
+    def get(self):
+        priority, _, timestamp, item = heapq.heappop(self.queue)
+        return item
+
+    def adjust_priorities(self):
+        for i, (priority, counter, timestamp, item) in enumerate(self.queue):
+            age = time.time() - timestamp
+            new_priority = priority - age  # Increase priority with age
+            self.queue[i] = (new_priority, counter, timestamp, item)
+        heapq.heapify(self.queue)
+
+# Create the aging priority queue
+item_queue = AgingPriorityQueue()
 
 async def fetch_data(api_endpoints: List[str], batch_size: int) -> list:
     """
@@ -45,7 +67,6 @@ async def fetch_data(api_endpoints: List[str], batch_size: int) -> list:
 async def parse_item(data: dict) -> Item:
     """
     Parse the dictionary data into an Item object using exorde_data classes.
-    If parsing is complex, this function could be made asynchronous.
     """
     content = Content(data.get("Content", ""))
     author = Author(data.get("Author", ""))  # Author is already hashed by the server
@@ -74,35 +95,37 @@ async def refill_queue(api_endpoints: List[str], max_items_to_fetch: int):
     """
     Refill the queue if it is empty or nearly empty.
     """
-    current_size = item_queue.qsize()
+    current_size = len(item_queue.queue)
 
-    if current_size == 0:
-        batch_size = min(QUEUE_MAX_SIZE, max_items_to_fetch)
-        logging.info(f"Queue is empty. Refilling queue with batch size: {batch_size}")
+    if current_size <= QUEUE_REFILL_THRESHOLD:
+        batch_size = min(QUEUE_MAX_SIZE - current_size, max_items_to_fetch)
+        logging.info(f"Queue size {current_size} below threshold. Refilling queue with batch size: {batch_size}")
         
         data = await fetch_data(api_endpoints, batch_size)
-        for entry in data:
-            parsed_item = await parse_item(entry)
-            if parsed_item is not None:
-                await item_queue.put(parsed_item)
-
-        logging.info(f"Refilled queue. New size: {item_queue.qsize()}")
+        if data:
+            for entry in data:
+                parsed_item = await parse_item(entry)
+                if parsed_item is not None:
+                    item_queue.put(parsed_item, priority=0)  # Add new items with base priority
+            logging.info(f"Refilled queue. New size: {len(item_queue.queue)}")
+        else:
+            logging.warning("No data fetched during refill attempt.")
 
 async def scrape(api_endpoints: List[str]) -> AsyncGenerator[Item, None]:
     """
     Main scraping logic that fetches and yields parsed Item objects.
     """
-    # Ensure queue is filled initially
     await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
 
     while True:
-        # Attempt to get an item from the queue, with a timeout to allow for refilling if needed
-        try:
-            item = await item_queue.get()
-            yield item
-            item_queue.task_done()
-        except asyncio.QueueEmpty:
+        item_queue.adjust_priorities()  # Adjust priorities before every fetch
+
+        if len(item_queue.queue) <= QUEUE_REFILL_THRESHOLD:
             await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
+
+        if item_queue.queue:
+            item = item_queue.get()
+            yield item
 
 async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
     """
@@ -116,7 +139,7 @@ async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
     async for item in scrape(api_endpoints):
         yield item
         items_collected += 1
-        #logging.info(f"Collected {items_collected} items so far.")
+        logging.info(f"Collected {items_collected} items so far.")
         
         if items_collected >= maximum_items_to_collect:
             break
