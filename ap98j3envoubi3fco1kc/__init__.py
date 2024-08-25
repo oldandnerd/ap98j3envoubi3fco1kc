@@ -44,14 +44,19 @@ item_queue = AgingPriorityQueue()
 
 async def fetch_data(api_endpoints: List[str], batch_size: int) -> list:
     async with aiohttp.ClientSession() as session:
-        current_proxy_index = 0  # Start with the first proxy in the list
-        
-        while True:  # Keep trying until data is fetched or all proxies are exhausted
-            if current_proxy_index >= len(api_endpoints):
-                logging.error("All proxies have failed. No data fetched.")
-                return []
+        last_successful_proxy = None
+        current_proxy_index = 0
 
-            endpoint = api_endpoints[current_proxy_index]
+        while True:
+            if last_successful_proxy:
+                # Use the last successful proxy
+                endpoint = last_successful_proxy
+            else:
+                # Use the current proxy from the list
+                if current_proxy_index >= len(api_endpoints):
+                    logging.error("All proxies have failed. No data fetched.")
+                    return []
+                endpoint = api_endpoints[current_proxy_index]
 
             try:
                 logging.info(f"Trying to fetch data from {endpoint}")
@@ -59,19 +64,34 @@ async def fetch_data(api_endpoints: List[str], batch_size: int) -> list:
                     logging.debug(f"Response status from {endpoint}: {response.status}")
                     if response.status == 200:
                         logging.info(f"Successfully fetched data from {endpoint}")
+                        last_successful_proxy = endpoint  # Remember the working proxy
                         return await response.json()
                     else:
                         logging.error(f"Failed to fetch data from {endpoint}: {response.status}")
-                        current_proxy_index += 1  # Move to the next proxy
+                        if last_successful_proxy:
+                            # If this fails but was the last successful proxy, we clear it
+                            last_successful_proxy = None
+                        else:
+                            # If not, move to the next proxy in the list
+                            current_proxy_index += 1
             except asyncio.TimeoutError:
                 logging.error(f"Timeout occurred while trying to fetch data from {endpoint}")
-                current_proxy_index += 1  # Move to the next proxy
+                if last_successful_proxy:
+                    last_successful_proxy = None
+                else:
+                    current_proxy_index += 1
             except aiohttp.ClientError as e:
                 logging.error(f"HTTP request failed at {endpoint}: {e}")
-                current_proxy_index += 1  # Move to the next proxy
+                if last_successful_proxy:
+                    last_successful_proxy = None
+                else:
+                    current_proxy_index += 1
             except Exception as e:
                 logging.error(f"An unexpected error occurred at {endpoint}: {e}")
-                current_proxy_index += 1  # Move to the next proxy
+                if last_successful_proxy:
+                    last_successful_proxy = None
+                else:
+                    current_proxy_index += 1
 
             # Small delay before trying the next proxy to avoid hitting them too quickly
             await asyncio.sleep(RETRY_DELAY)
