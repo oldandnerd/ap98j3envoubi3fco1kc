@@ -2,7 +2,7 @@ import aiohttp
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Dict, Any, List
+from typing import List, Dict, Any, AsyncGenerator
 from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
 
 # Configuration
@@ -12,14 +12,13 @@ API_ENDPOINTS = [
 ]
 DEFAULT_MAXIMUM_ITEMS = 25  # Default number of items to collect
 RETRY_DELAY = 5             # Delay in seconds before retrying
-REFILL_THRESHOLD_PERCENT = 0.50  # Threshold percentage for refilling (50%)
-
-# Global variables
-GLOBAL_ITEM_LIST_MAX_SIZE = 200  # Maximum size of the global item list
-global_item_list: List[Item] = []
+QUEUE_MAX_SIZE = 200        # Maximum size of the queue
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
+
+# Create an asynchronous queue to hold fetched items
+item_queue = asyncio.Queue(maxsize=QUEUE_MAX_SIZE)
 
 async def fetch_data(api_endpoints: List[str], batch_size: int) -> list:
     """
@@ -43,9 +42,10 @@ async def fetch_data(api_endpoints: List[str], batch_size: int) -> list:
     logging.error("All endpoints failed. No data fetched.")
     return []
 
-def parse_item(data: dict) -> Item:
+async def parse_item(data: dict) -> Item:
     """
     Parse the dictionary data into an Item object using exorde_data classes.
+    If parsing is complex, this function could be made asynchronous.
     """
     content = Content(data.get("Content", ""))
     author = Author(data.get("Author", ""))  # Author is already hashed by the server
@@ -70,55 +70,39 @@ def parse_item(data: dict) -> Item:
         domain=domain,
     )
 
-async def refill_global_list(api_endpoints: List[str], total_capacity: int):
+async def refill_queue(api_endpoints: List[str], max_items_to_fetch: int):
     """
-    Refill the global item list if it is below the threshold percentage.
+    Refill the queue if it is empty or nearly empty.
     """
-    global global_item_list
-    current_size = len(global_item_list)
-    threshold = total_capacity * REFILL_THRESHOLD_PERCENT
+    current_size = item_queue.qsize()
 
-    if current_size <= threshold:
-        # Calculate the batch size dynamically based on the difference between max size and current size
-        batch_size = GLOBAL_ITEM_LIST_MAX_SIZE - current_size
-        logging.info(f"Refilling global item list. Current size: {current_size}, Batch size: {batch_size}")
+    if current_size == 0:
+        batch_size = min(QUEUE_MAX_SIZE, max_items_to_fetch)
+        logging.info(f"Queue is empty. Refilling queue with batch size: {batch_size}")
         
         data = await fetch_data(api_endpoints, batch_size)
-        new_items = []
         for entry in data:
-            parsed_item = parse_item(entry)
+            parsed_item = await parse_item(entry)
             if parsed_item is not None:
-                new_items.append(parsed_item)
+                await item_queue.put(parsed_item)
 
-        # Ensure the global item list doesn't exceed its maximum size
-        global_item_list.extend(new_items)
-        if len(global_item_list) > GLOBAL_ITEM_LIST_MAX_SIZE:
-            # Trim the list to maintain the maximum size
-            excess_items = len(global_item_list) - GLOBAL_ITEM_LIST_MAX_SIZE
-            global_item_list = global_item_list[excess_items:]
-            logging.info(f"Trimmed global item list to maximum size. New size: {len(global_item_list)}")
-        else:
-            logging.info(f"Refilled global item list. New size: {len(global_item_list)}")
+        logging.info(f"Refilled queue. New size: {item_queue.qsize()}")
 
 async def scrape(api_endpoints: List[str]) -> AsyncGenerator[Item, None]:
     """
     Main scraping logic that fetches and yields parsed Item objects.
     """
-    global global_item_list
-
-    # Ensure global list is filled initially
-    await refill_global_list(api_endpoints, GLOBAL_ITEM_LIST_MAX_SIZE)
+    # Ensure queue is filled initially
+    await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
 
     while True:
-        if not global_item_list:
-            await refill_global_list(api_endpoints, GLOBAL_ITEM_LIST_MAX_SIZE)
-
-        if global_item_list:
-            item = global_item_list.pop(0)
+        # Attempt to get an item from the queue, with a timeout to allow for refilling if needed
+        try:
+            item = await item_queue.get()
             yield item
-        else:
-            # Break the loop if no items are available and cannot refill
-            break
+            item_queue.task_done()
+        except asyncio.QueueEmpty:
+            await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
 
 async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
     """
