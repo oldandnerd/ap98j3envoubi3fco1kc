@@ -127,8 +127,8 @@ async def scrape(api_endpoints: List[str]) -> AsyncGenerator[Item, None]:
             if item_queue.queue:
                 item = item_queue.get()
 
-                # Print the item before yielding
-                print(f"Yielding item: {item}")
+                # Log the item before yielding
+                logging.info(f"Yielding item: {item}")
 
                 yield item
     except GeneratorExit:
