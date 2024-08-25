@@ -12,7 +12,6 @@ API_ENDPOINTS = [
 ]
 DEFAULT_MAXIMUM_ITEMS = 25  # Default number of items to collect
 RETRY_DELAY = 5             # Delay in seconds before retrying
-REFILL_THRESHOLD_PERCENT = 0.50  # Threshold percentage for refilling (50%)
 QUEUE_MAX_SIZE = 200        # Maximum size of the queue
 
 # Configure logging
@@ -73,14 +72,13 @@ async def parse_item(data: dict) -> Item:
 
 async def refill_queue(api_endpoints: List[str], max_items_to_fetch: int):
     """
-    Refill the queue if it is below the threshold percentage.
+    Refill the queue if it is empty or nearly empty.
     """
     current_size = item_queue.qsize()
-    threshold = QUEUE_MAX_SIZE * REFILL_THRESHOLD_PERCENT
 
-    if current_size <= threshold:
-        batch_size = min(QUEUE_MAX_SIZE - current_size, max_items_to_fetch)
-        logging.info(f"Refilling queue. Current size: {current_size}, Batch size: {batch_size}")
+    if current_size == 0:
+        batch_size = min(QUEUE_MAX_SIZE, max_items_to_fetch)
+        logging.info(f"Queue is empty. Refilling queue with batch size: {batch_size}")
         
         data = await fetch_data(api_endpoints, batch_size)
         for entry in data:
@@ -98,16 +96,13 @@ async def scrape(api_endpoints: List[str]) -> AsyncGenerator[Item, None]:
     await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
 
     while True:
-        # Refill the queue if it's running low
-        if item_queue.qsize() <= QUEUE_MAX_SIZE * REFILL_THRESHOLD_PERCENT:
-            await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
-
+        # Attempt to get an item from the queue, with a timeout to allow for refilling if needed
         try:
             item = await item_queue.get()
             yield item
             item_queue.task_done()
-        except asyncio.CancelledError:
-            break
+        except asyncio.QueueEmpty:
+            await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
 
 async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
     """
