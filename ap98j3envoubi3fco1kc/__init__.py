@@ -12,7 +12,7 @@ API_ENDPOINTS = [
 ]
 DEFAULT_MAXIMUM_ITEMS = 25  # Default number of items to collect
 RETRY_DELAY = 5             # Delay in seconds before retrying
-REFILL_THRESHOLD_PERCENT = 0.50  # Threshold percentage for refilling (now set to 50%)
+REFILL_THRESHOLD_PERCENT = 0.50  # Threshold percentage for refilling (50%)
 
 # Global variables
 GLOBAL_ITEM_LIST_MAX_SIZE = 200  # Maximum size of the global item list
@@ -107,11 +107,11 @@ async def scrape(api_endpoints: List[str]) -> AsyncGenerator[Item, None]:
     global global_item_list
 
     # Ensure global list is filled initially
-    await refill_global_list(api_endpoints, DEFAULT_MAXIMUM_ITEMS)
+    await refill_global_list(api_endpoints, GLOBAL_ITEM_LIST_MAX_SIZE)
 
     while True:
         if not global_item_list:
-            await refill_global_list(api_endpoints, DEFAULT_MAXIMUM_ITEMS)
+            await refill_global_list(api_endpoints, GLOBAL_ITEM_LIST_MAX_SIZE)
 
         if global_item_list:
             item = global_item_list.pop(0)
