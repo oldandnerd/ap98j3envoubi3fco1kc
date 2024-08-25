@@ -115,17 +115,25 @@ async def scrape(api_endpoints: List[str]) -> AsyncGenerator[Item, None]:
     """
     Main scraping logic that fetches and yields parsed Item objects.
     """
-    await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
+    try:
+        await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
 
-    while True:
-        item_queue.adjust_priorities()  # Adjust priorities before every fetch
+        while True:
+            item_queue.adjust_priorities()  # Adjust priorities before every fetch
 
-        if len(item_queue.queue) <= QUEUE_REFILL_THRESHOLD:
-            await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
+            if len(item_queue.queue) <= QUEUE_REFILL_THRESHOLD:
+                await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
 
-        if item_queue.queue:
-            item = item_queue.get()
-            yield item
+            if item_queue.queue:
+                item = item_queue.get()
+                yield item
+    except GeneratorExit:
+        # Gracefully exit the generator without raising an error
+        logging.info("GeneratorExit: Closing the scrape generator gracefully.")
+        return  # Exit the generator without re-raising
+    except Exception as e:
+        logging.error(f"An error occurred in the scrape generator: {e}")
+        raise  # Re-raise other exceptions to handle them properly
 
 async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
     """
