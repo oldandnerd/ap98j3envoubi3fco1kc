@@ -43,26 +43,38 @@ class AgingPriorityQueue:
 item_queue = AgingPriorityQueue()
 
 async def fetch_data(api_endpoints: List[str], batch_size: int) -> list:
-    """
-    Fetch data from the Reddit scraping servers with retry on failure. Tries multiple endpoints.
-    """
     async with aiohttp.ClientSession() as session:
-        for endpoint in api_endpoints:
-            for attempt in range(3):  # Number of retry attempts per endpoint
-                try:
-                    async with session.get(f"{endpoint}?size={batch_size}") as response:
-                        if response.status == 200:
-                            return await response.json()
-                        elif response.status == 404:
-                            logging.error(f"Data not found (404) at {endpoint}. Retrying...")
-                        else:
-                            logging.error(f"Failed to fetch data from {endpoint}: {response.status}")
-                except aiohttp.ClientError as e:
-                    logging.error(f"HTTP request failed at {endpoint}: {e}")
-                await asyncio.sleep(RETRY_DELAY)  # Centralized sleep
-            logging.error(f"Endpoint {endpoint} failed after multiple attempts.")
-    logging.error("All endpoints failed. No data fetched.")
-    return []
+        current_proxy_index = 0  # Start with the first proxy in the list
+        
+        while True:  # Keep trying until data is fetched or all proxies are exhausted
+            if current_proxy_index >= len(api_endpoints):
+                logging.error("All proxies have failed. No data fetched.")
+                return []
+
+            endpoint = api_endpoints[current_proxy_index]
+
+            try:
+                logging.info(f"Trying to fetch data from {endpoint}")
+                async with session.get(f"{endpoint}?size={batch_size}", timeout=5) as response:
+                    logging.debug(f"Response status from {endpoint}: {response.status}")
+                    if response.status == 200:
+                        logging.info(f"Successfully fetched data from {endpoint}")
+                        return await response.json()
+                    else:
+                        logging.error(f"Failed to fetch data from {endpoint}: {response.status}")
+                        current_proxy_index += 1  # Move to the next proxy
+            except asyncio.TimeoutError:
+                logging.error(f"Timeout occurred while trying to fetch data from {endpoint}")
+                current_proxy_index += 1  # Move to the next proxy
+            except aiohttp.ClientError as e:
+                logging.error(f"HTTP request failed at {endpoint}: {e}")
+                current_proxy_index += 1  # Move to the next proxy
+            except Exception as e:
+                logging.error(f"An unexpected error occurred at {endpoint}: {e}")
+                current_proxy_index += 1  # Move to the next proxy
+
+            # Small delay before trying the next proxy to avoid hitting them too quickly
+            await asyncio.sleep(RETRY_DELAY)
 
 async def parse_item(data: dict) -> Item:
     """
