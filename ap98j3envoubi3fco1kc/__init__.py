@@ -143,10 +143,13 @@ async def refill_queue(api_endpoints: List[str], max_items_to_fetch: int):
         else:
             logging.warning("No data fetched during refill attempt.")
 
-async def scrape(api_endpoints: List[str]) -> AsyncGenerator[Item, None]:
+async def scrape(api_endpoints: List[str]) -> AsyncGenerator[List[Item], None]:
     """
-    Main scraping logic that fetches and yields parsed Item objects.
+    Main scraping logic that fetches and yields lists of parsed Item objects in batches.
     """
+    BATCH_SIZE = 80  # Desired batch size
+    batch = []  # Initialize an empty list to collect items
+
     try:
         await refill_queue(api_endpoints, max_items_to_fetch=QUEUE_MAX_SIZE)
 
@@ -158,32 +161,36 @@ async def scrape(api_endpoints: List[str]) -> AsyncGenerator[Item, None]:
 
             if item_queue.queue:
                 item = item_queue.get()
+                batch.append(item)  # Add item to the current batch
 
-                # Log the item before yielding
-                #logging.info(f"Yielding item: {item}")
+                if len(batch) >= BATCH_SIZE:  # When batch size is reached, yield the batch
+                    yield batch
+                    batch = []  # Reset the batch list after yielding
 
-                yield item
     except GeneratorExit:
         # Gracefully exit the generator without raising an error
         logging.info("GeneratorExit: Closing the scrape generator gracefully.")
-        return  # Exit the generator without re-raising
     except Exception as e:
         logging.error(f"An error occurred in the scrape generator: {e}")
         raise  # Re-raise other exceptions to handle them properly
+    finally:
+        # If there are leftover items in the batch, yield them before exiting
+        if batch:
+            yield batch
 
-async def query(parameters: Dict[str, Any]) -> AsyncGenerator[Item, None]:
+
+async def query(parameters: Dict[str, Any]) -> AsyncGenerator[List[Item], None]:
     """
-    Main interface between the client core and the scraper. Yields items.
+    Main interface between the client core and the scraper. Yields batches of items.
     """
     api_endpoints = API_ENDPOINTS  # Default API endpoints, can be changed if needed
     maximum_items_to_collect = parameters.get("maximum_items_to_collect", DEFAULT_MAXIMUM_ITEMS)
 
     items_collected = 0
 
-    async for item in scrape(api_endpoints):
-        yield item
-        items_collected += 1
-        #logging.info(f"Collected {items_collected} items so far.")
+    async for batch in scrape(api_endpoints):
+        yield batch
+        items_collected += len(batch)
         
         if items_collected >= maximum_items_to_collect:
             break
