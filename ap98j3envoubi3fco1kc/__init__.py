@@ -9,7 +9,7 @@ from exorde_data import Item, Content, Author, CreatedAt, Title, Url, Domain
 # Configuration
 API_ENDPOINTS = [
     "http://192.168.10.142:8000/fetch_reddit_posts",
-    "http://84.52.244.233:8000/fetch_reddit_posts"
+    "http://148.135.56.124:8000/fetch_reddit_posts"
 ]
 DEFAULT_MAXIMUM_ITEMS = 25  # Default number of items to collect
 RETRY_DELAY = 5             # Delay in seconds before retrying
